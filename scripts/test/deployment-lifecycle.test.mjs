@@ -75,10 +75,10 @@ test('old project identity, bind volumes and Web compatibility survive adoption'
   const updated=JSON.parse(await readFile(join(f.target,'docker-compose.yml'),'utf8'));assert.deepEqual(updated.volumes,cfg.volumes);assert.deepEqual(updated.services.web.security_opt,cfg.services.web.security_opt);assert.deepEqual(updated.services.postgres,cfg.services.postgres);
 });
 
-for(const version of ['5.5.0','2.19.1'])test('installer enforces Compose minimum with version '+version,options,async t=>{
+for(const version of ['5.5.0','2.27.0-desktop.2','v2.20.2','2.19.1','2.19.1-desktop.2','invalid'])test('installer enforces Compose minimum with version '+version,options,async t=>{
   const f=await fixture(t);f.composeVersion=version;
   const file=await pack(f,old,'install'),r=deploy(f,file,'install');
-  if(version==='5.5.0'){
+  if(['5.5.0','2.27.0-desktop.2','v2.20.2'].includes(version)){
     assert.equal(r.status,0,r.stdout+r.stderr);
     assert.match(r.stdout,/自动检查通过/);
   }else{
