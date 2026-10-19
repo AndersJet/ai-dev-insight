@@ -59,6 +59,15 @@ cleanup() {
     [[ -z "$backup" ]] || printf '升级前备份：%s（仅 .complete 存在时表示完整）\n' "$backup" >&2
     [[ -z "$log" ]] || printf '私有日志：%s\n' "$log" >&2
   fi
+  if (( code != 0 )) && [[ -n "$work" && -n "$log" ]]; then
+    # Hashes identify the host-side inputs without retaining database credentials.
+    for input in current.json containers.json template.json; do
+      [[ -f "$work/$input" ]] || continue
+      bytes=$(wc -c 2>/dev/null < "$work/$input") || bytes=unavailable
+      digest=$(sha256_file "$work/$input" 2>/dev/null) || digest=unavailable
+      printf '配置输入摘要：%s bytes=%s sha256=%s\n' "$input" "$bytes" "$digest" >> "$log" || true
+    done
+  fi
   [[ -z "$work" ]] || rm -rf -- "$work"
   rm -f -- "$lock/pid"; rmdir "$lock" 2>/dev/null || true
   exit "$code"

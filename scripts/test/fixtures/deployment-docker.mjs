@@ -60,6 +60,8 @@ else if (a[0] === 'run') {
   const source = mount=>mount.split(',').find(v=>v.startsWith('src=')).slice(4);
   const tool = source(mounts.find(m=>m.includes('dst=/adi-tools'))), work = source(mounts.find(m=>m.includes('dst=/adi-work')));
   const index = a.indexOf('/adi-tools/site-config.mjs'), mode = a[index+1];
+  if(mode==='verify' && fail==='input-truncated')fs.writeFileSync(path.join(work,'containers.json'),'{"ADI_APP_DB_PASSWORD":"SYNTHETIC_SECRET_DO_NOT_LOG"');
+  if(mode==='verify' && fail==='input-unreadable')fs.chmodSync(path.join(work,'containers.json'),0);
   if (mode === 'ports') { if (fail === 'ports') process.exit(7); process.exit(0); }
   const result=cp.spawnSync(process.execPath,[path.join(tool,'site-config.mjs'),...a.slice(index+1)], {env:{...process.env,ADI_DEPLOY_TOOL_WORK:work},encoding:'utf8'});
   process.stdout.write(result.stdout || ''); process.stderr.write(result.stderr || ''); process.exit(result.status ?? 1);

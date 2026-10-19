@@ -1,5 +1,6 @@
 // Runs with Node from the API image: no Node/Python installation on the host.
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import net from 'node:net';
 import process from 'node:process';
 import { URL } from 'node:url';
@@ -10,7 +11,16 @@ class ConfigError extends Error {}
 const fail = code => { throw new ConfigError(code); };
 const workRoot = process.env.ADI_DEPLOY_TOOL_WORK || '/adi-work';
 const siteRoot = process.env.ADI_DEPLOY_TOOL_SITE || '/adi-site';
-const read = name => JSON.parse(fs.readFileSync(workRoot + '/' + name, 'utf8'));
+const read = name => {
+  let raw;
+  try { raw = fs.readFileSync(workRoot + '/' + name); }
+  catch (error) {
+    const code = typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{0,31}$/.test(error.code) ? error.code : 'UNKNOWN';
+    fail('无法读取配置输入：' + name + '（' + code + '）');
+  }
+  try { return JSON.parse(raw.toString('utf8')); }
+  catch { fail('配置输入不是完整 JSON：' + name + '（' + raw.length + ' bytes，SHA256 ' + createHash('sha256').update(raw).digest('hex') + '）'); }
+};
 const output = value => process.stdout.write(typeof value === 'string' ? value + '\n' : JSON.stringify(value, null, 2) + '\n');
 
 export function verifySite(config, containers, root, partial = false) {
@@ -161,5 +171,5 @@ async function main() {
   } else fail('未知配置检查操作');
 }
 if (process.argv[1]?.endsWith('/site-config.mjs')) {
-  main().catch(error => { process.stderr.write('配置检查失败：' + (error instanceof ConfigError ? error.message.replace(/[\r\n]/g, ' ') : '无法读取或解析配置文件') + '\n'); process.exitCode = 1; });
+  main().catch(error => { process.stderr.write('配置检查失败：' + (error instanceof ConfigError ? error.message.replace(/[\r\n]/g, ' ') : '未预期的配置处理错误（' + (['TypeError','RangeError','SyntaxError'].includes(error?.name) ? error.name : 'Error') + '）') + '\n'); process.exitCode = 1; });
 }

@@ -87,3 +87,13 @@ for(const version of ['5.5.0','2.27.0-desktop.2','v2.20.2','2.19.1','2.19.1-desk
     assert.ok(!(await calls(f)).some(a=>a.includes('stop')||a.includes('up')));
   }
 });
+
+for(const failure of ['input-truncated','input-unreadable'])test('preflight identifies '+failure+' without exposing content or stopping writers',options,async t=>{
+  const f=await installed(t),file=await pack(f,next),before=(await calls(f)).length,r=deploy(f,file,'upgrade',failure);
+  assert.notEqual(r.status,0);
+  assert.match(r.stderr,/containers\.json/);
+  assert.match(r.stderr,failure==='input-truncated'?/JSON.*SHA256/:/EACCES/);
+  assert.doesNotMatch(r.stderr,/SYNTHETIC_SECRET_DO_NOT_LOG/);
+  assert.ok(!(await calls(f)).slice(before).some(a=>a.includes('stop')||a.includes('up')));
+  const state=JSON.parse(await readFile(f.state,'utf8'));for(const c of Object.values(state.containers))assert.equal(c.State.Status,'running');
+});
