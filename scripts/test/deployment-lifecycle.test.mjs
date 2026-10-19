@@ -12,7 +12,7 @@ const manual = fileURLToPath(new URL('../../deploy/manual/', import.meta.url));
 const old = 'a'.repeat(40), next = 'b'.repeat(40), options = {skip:process.platform==='win32',timeout:60000};
 async function fixture(t){
   const root=await mkdtemp(join(tmpdir(),'adi-lifecycle-')),bin=join(root,'bin'),source=join(root,'source');
-  await mkdir(bin);await cp(manual,source,{recursive:true,filter:path=>!path.includes('/offline')});
+  await mkdir(bin);await cp(manual,source,{recursive:true,filter:path=>!path.includes('/offline')&&!path.includes('/.export-lock')});
   const mock=await readFile(new URL('./fixtures/deployment-docker.mjs',import.meta.url),'utf8');
   await writeFile(join(bin,'docker'),'#!'+process.execPath+'\n'+mock,{mode:0o755});
   const f={root,source,bin,target:join(root,'test'),config:join(root,'config.env'),state:join(root,'docker.json'),calls:join(root,'calls.jsonl')};
@@ -20,7 +20,7 @@ async function fixture(t){
   t.after(()=>rm(root,{recursive:true,force:true}));return f;
 }
 function run(f,file,args=[],fail=''){
-  const result=spawnSync('/bin/bash',[file,...args],{encoding:'utf8',timeout:45000,env:{...process.env,PATH:f.bin+':'+process.env.PATH,FIXTURE_STATE:f.state,FIXTURE_CALLS:f.calls,FIXTURE_FAIL:fail}});
+  const result=spawnSync('/bin/bash',[file,...args],{encoding:'utf8',timeout:45000,env:{...process.env,PATH:f.bin+':'+process.env.PATH,FIXTURE_STATE:f.state,FIXTURE_CALLS:f.calls,FIXTURE_FAIL:fail,...(f.composeVersion?{FIXTURE_COMPOSE_VERSION:f.composeVersion}:{})}});
   if(result.status!==0){try{const logs=readdirSync(join(f.target,'logs')).sort();result.stderr+='\nFixture log:\n'+readFileSync(join(f.target,'logs',logs.at(-1)),'utf8');}catch{/* No application log for pre-extraction failures. */}}
   return result;
 }
@@ -73,4 +73,17 @@ test('old project identity, bind volumes and Web compatibility survive adoption'
   await writeFile(join(f.target,'docker-compose.yml'),JSON.stringify(cfg));
   const file=await pack(f,next),r=deploy(f,file);assert.equal(r.status,0,r.stdout+r.stderr);
   const updated=JSON.parse(await readFile(join(f.target,'docker-compose.yml'),'utf8'));assert.deepEqual(updated.volumes,cfg.volumes);assert.deepEqual(updated.services.web.security_opt,cfg.services.web.security_opt);assert.deepEqual(updated.services.postgres,cfg.services.postgres);
+});
+
+for(const version of ['5.5.0','2.19.1'])test('installer enforces Compose minimum with version '+version,options,async t=>{
+  const f=await fixture(t);f.composeVersion=version;
+  const file=await pack(f,old,'install'),r=deploy(f,file,'install');
+  if(version==='5.5.0'){
+    assert.equal(r.status,0,r.stdout+r.stderr);
+    assert.match(r.stdout,/自动检查通过/);
+  }else{
+    assert.notEqual(r.status,0);
+    assert.match(r.stderr,/2\.20/);
+    assert.ok(!(await calls(f)).some(a=>a.includes('stop')||a.includes('up')));
+  }
 });

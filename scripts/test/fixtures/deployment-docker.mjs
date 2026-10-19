@@ -65,7 +65,7 @@ else if (a[0] === 'run') {
   process.stdout.write(result.stdout || ''); process.stderr.write(result.stderr || ''); process.exit(result.status ?? 1);
 } else if (a[0] === 'compose') {
   a = a.slice(1);
-  if (a[0] === 'version') { console.log('2.20.2'); process.exit(0); }
+  if (a[0] === 'version') { console.log(process.env.FIXTURE_COMPOSE_VERSION || '2.20.2'); process.exit(0); }
   const root = option('--project-directory',process.cwd()), configFile = option('-f',path.join(root,'docker-compose.yml'));
   const raw = fs.readFileSync(configFile,'utf8'), config = raw.startsWith('{') ? JSON.parse(raw) : template(root);
   const commands=['config','ps','stop','exec','run','up'], command=a.find(v=>commands.includes(v));

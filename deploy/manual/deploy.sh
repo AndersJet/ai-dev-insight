@@ -84,7 +84,8 @@ elif docker compose version >/dev/null 2>&1; then compose_cmd=(docker compose)
 elif command -v docker-compose >/dev/null 2>&1; then compose_cmd=(docker-compose)
 else manual_die '需要 Docker Compose V2（2.20 或以上）；现场独立程序可保留在部署目录。'; fi
 version=$("${compose_cmd[@]}" version --short 2>> "$log")
-[[ "$version" =~ ^v?2\.([0-9]+)\. && "${BASH_REMATCH[1]}" -ge 20 ]] || manual_die '需要 Docker Compose V2 2.20 或以上。'
+[[ "$version" =~ ^v?([0-9]+)\.([0-9]+)\.[0-9]+$ ]] || manual_die '需要 Docker Compose 2.20 或以上。'
+(( BASH_REMATCH[1] > 2 || (BASH_REMATCH[1] == 2 && BASH_REMATCH[2] >= 20) )) || manual_die '需要 Docker Compose 2.20 或以上。'
 compose() (
   # Ambient application/Compose variables must not redirect this operation.
   while IFS='=' read -r key _; do [[ "$key" =~ ^(ADI_[A-Z0-9_]+|TRAE_OPENAPI_[A-Z0-9_]+|COMPOSE_PROJECT_NAME)$ ]] && unset "$key"; done < "$target/.env"
