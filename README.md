@@ -4,6 +4,8 @@
 
 # AI Dev Insight
 
+Community release **1.0.0**.
+
 Self-hosted insight into Trae adoption, token usage, sessions, and project activity.
 
 **English** · [简体中文](README-zh.md) · [Build and deploy](docs/build.md) · [Development](DEVELOP.md)
@@ -36,7 +38,7 @@ pnpm build
 
 Dependencies default to the public npm registry. No maintainer registry, enterprise account, or private CI service is needed.
 
-Build outputs include the Web frontend, API/Collector/Worker services, native Hook materials, and `trae-plugin/dist/adi-project-tracker-1.0.6.vsix`. See [build and deployment instructions](docs/build.md) for four-image builds, offline packages, and first startup.
+Build outputs include the Web frontend, API/Collector/Worker services, native Hook materials, and `trae-plugin/dist/adi-project-tracker-1.0.0.vsix`. See [build and deployment instructions](docs/build.md) for four-image builds, offline packages, and first startup.
 
 ## Run locally
 

@@ -12,7 +12,7 @@ pnpm build
 
 The default npm source is public. The lockfile is frozen during installation. Required generated contracts and legal materials are part of the source tree; regenerate them when changing contracts/dependencies.
 
-The build creates the Web frontend, service packages, native Hook template and the main/Remote SSH helper VSIX files. Install `trae-plugin/dist/adi-project-tracker-1.0.6.vsix` through Trae's VSIX installation flow, then configure your deployment's root URL.
+The build creates the Web frontend, service packages, native Hook template and the main/Remote SSH helper VSIX files. Install `trae-plugin/dist/adi-project-tracker-1.0.0.vsix` through Trae's VSIX installation flow, then configure your deployment's root URL.
 
 ## Four service images
 

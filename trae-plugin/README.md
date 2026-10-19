@@ -1,5 +1,7 @@
 # AI Dev Insight 分析助手
 
+Community release **1.0.0**. The platform, main plugin and Remote SSH helper share this release version. See [Changelog](CHANGELOG.md).
+
 将 Trae 连接到你自行部署的 AI Dev Insight，查看个人使用概览、历史会话和 Token 能效分析，并管理本机 Hook 与 Git 项目观测。
 
 ## 安装与接入

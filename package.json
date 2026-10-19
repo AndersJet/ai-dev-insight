@@ -1,6 +1,6 @@
 {
   "name": "ai-dev-insight",
-  "version": "1.5.3",
+  "version": "1.0.0",
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "engines": {

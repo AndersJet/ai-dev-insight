@@ -4,6 +4,8 @@
 
 # AI Dev Insight
 
+社区版本 **1.0.0**。
+
 可自主部署的 Trae 使用分析平台：团队采纳、Token 用量、会话复盘与项目观测。
 
 [English](README.md) · **简体中文** · [构建与部署](docs/build.md) · [开发文档](DEVELOP.md)
@@ -36,7 +38,7 @@ pnpm build
 
 默认从公共 npm 安装，不需要维护者的私有依赖源、镜像仓库或 CI 权限。
 
-构建结果包括 Web、API/Collector/Worker、原生 Hook 材料与 `trae-plugin/dist/adi-project-tracker-1.0.6.vsix`。四镜像构建、离线包和首次启动见[构建与部署说明](docs/build.md)。
+构建结果包括 Web、API/Collector/Worker、原生 Hook 材料与 `trae-plugin/dist/adi-project-tracker-1.0.0.vsix`。四镜像构建、离线包和首次启动见[构建与部署说明](docs/build.md)。
 
 ## 本地运行
 

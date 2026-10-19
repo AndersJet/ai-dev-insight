@@ -31,6 +31,10 @@ test('the VSIX contains its executable entry and preset endpoint but no personal
   assert.equal(manifest.contributes.configuration.properties['adiProjectTracker.serverUrl'],undefined);
   assert.equal(manifest.contributes.configuration.properties['adiProjectTracker.webUrl'].default,'http://127.0.0.1:4184');
   const helper=unzipSync(files['extension/dist/remote-workspace.vsix']!);const helperManifest=JSON.parse(Buffer.from(helper['extension/package.json']!).toString('utf8'));assert.deepEqual(manifest.extensionKind,['ui']);assert.deepEqual(helperManifest.extensionKind,['workspace']);assert.equal(helperManifest.adiBuildId,manifest.adiBuildId);assert.equal(helperManifest.version,manifest.version);assert.ok(helper['extension/dist/remote-hook-sender.cjs']?.length);assert.equal(Object.keys(helper).some(name=>/state\.json|relay.*\.json/.test(name)),false);
+  for(const archive of [files,helper]){
+    assert.ok(archive['extension/CHANGELOG.md']?.length,'both published plugins must include the changelog linked by their README');
+    assert.deepEqual(Buffer.from(archive['extension/CHANGELOG.md']!),await readFile(join(root,'trae-plugin/CHANGELOG.md')));
+  }
   assert.equal(helperManifest.icon,manifest.icon);
   assert.deepEqual(Buffer.from(helper['extension/'+helperManifest.icon]!),Buffer.from(files['extension/'+manifest.icon]!));
   assert.match(Buffer.from(helper['extension.vsixmanifest']!).toString(),/Type="Microsoft\.VisualStudio\.Services\.Icons\.Default" Path="extension\/media\/adi-icon\.png"/);

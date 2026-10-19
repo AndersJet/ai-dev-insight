@@ -4,7 +4,7 @@
   "description": "本机登录和平台通信，支持本地及 Remote SSH 的 Hook 与 Git 观测",
   "publisher": "ai-dev-insight",
   "icon": "media/adi-icon.png",
-  "version": "1.0.6",
+  "version": "1.0.0",
   "private": true,
   "engines": {
     "vscode": "^1.107.0"

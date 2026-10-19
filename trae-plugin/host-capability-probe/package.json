@@ -1,7 +1,7 @@
 {
   "name":"adi-host-capability-probe",
   "publisher":"adi-test",
-  "version":"0.0.1",
+  "version":"1.0.0",
   "displayName":"ADI Host Capability Probe (synthetic only)",
   "description":"仅测试Trae宿主API，合成数据；不运行Git/Hook、不连接平台。",
   "engines":{"vscode":"^1.107.0"},
