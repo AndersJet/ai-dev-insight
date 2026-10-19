@@ -12,6 +12,12 @@
 
 </div>
 
+## 90 秒宣传视频
+
+https://github.com/user-attachments/assets/adfb99e7-0ce8-4470-b881-ae3b8e7c2cd0
+
+[打开或下载原视频](docs/media/ai-dev-insight-overview.mp4) · MP4 / 90 秒 / 1080p，打开播放器声音可收听配音。
+
 ![使用合成数据的产品预览](docs/images/product-overview.png)
 
 ## 功能

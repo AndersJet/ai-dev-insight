@@ -12,6 +12,12 @@ Self-hosted insight into Trae adoption, token usage, sessions, and project activ
 
 </div>
 
+## 90-second overview
+
+https://github.com/user-attachments/assets/adfb99e7-0ce8-4470-b881-ae3b8e7c2cd0
+
+[Open or download the original video](docs/media/ai-dev-insight-overview.mp4) · MP4 / 90s / 1080p. Enable sound for narration.
+
 ![Product preview with synthetic data](docs/images/product-overview.png)
 
 ## What it does

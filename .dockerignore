@@ -21,3 +21,6 @@ deploy/runs/
 .local/
 **/.env*
 **/*.env
+
+# Documentation-only promotional media.
+docs/media/
