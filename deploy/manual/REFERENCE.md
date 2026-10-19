@@ -8,7 +8,7 @@
 
 `recover` 继续同版本向前升级，不自动恢复旧数据库。需要回退数据库时，先隔离目标并停止全部写入者，保留最新独立 cleanup journal 和原凭据密钥；使用现有 `recovery-cli` / `recovery-access-cli` 的检查点、清理重放、身份审核与显式开放流程。操作参数见 `deploy/product/recovery.env.example`，实际命令先查看对应 CLI 的帮助。不得直接恢复旧 DB 后启动服务，避免让已删除内容或旧凭据重新生效。灾备、异机备份和恢复时间另行验证。
 
-目标：联网机器生成一个离线包，传到 Linux 服务器，修改 `.env`，执行 `docker-compose up -d`。不需要在服务器安装 Node、pnpm、Git 或访问 Harbor。
+目标：联网机器生成一个离线包，传到 Linux 服务器，修改 `.env`，执行 `docker-compose up -d`。不需要在服务器安装 Node、pnpm、Git 或访问镜像仓库。
 
 本目录包含四个应用镜像和 PostgreSQL 18.6。正常运行时有 **5 个常驻容器**：web、api、collector、worker、postgres。另有 **2 个一次性任务**：prepare-storage 准备持久卷权限，initialize 迁移数据库并同步管理员；它们复用 API 镜像，成功后退出，不需要额外镜像。
 
@@ -27,7 +27,7 @@
 
 仓库、产品镜像和新离线发行包统一使用 `ai-dev-insight`。已有部署的 Compose 项目名及命名卷是运行时身份，升级时显式保留并合并现场配置；新镜像名称不自动迁移已有卷。
 
-数据库、账号采集凭据密钥、cleanup journal 放在独立命名卷中。新部署 Compose 项目名默认为 `ai-dev-insight`，由 `.env` 的 `COMPOSE_PROJECT_NAME` 固定，换目录不会生成另一套卷。已有部署升级时保持原项目名（例如 `trae-hooks-manual`）和原卷绑定，参见[重命名后的升级兼容](#rename-upgrade)。不要同时启动该项目的第二套副本，不要使用 `docker-compose down -v`。旧的 `-p adi` 或 `adi-db` 部署并不属于本项目，不能直接接管其卷或数据。
+数据库、账号采集凭据密钥、cleanup journal 放在独立命名卷中。新部署 Compose 项目名默认为 `ai-dev-insight`，由 `.env` 的 `COMPOSE_PROJECT_NAME` 固定，换目录不会生成另一套卷。已有部署升级时保持原项目名和原卷绑定，参见[重命名后的升级兼容](#rename-upgrade)。不要同时启动该项目的第二套副本，不要使用 `docker-compose down -v`。其他应用或历史试验的卷和数据不能直接接管。
 
 ## 1. 社区镜像的版本身份
 
@@ -92,7 +92,7 @@ offline/
 
 ## 3. 服务器解包与导入
 
-适用 **新 PostgreSQL 数据目录**；旧 SQLite、旧 schema 账本、现有非空业务 schema 或其他项目的卷不走这条首装路径。目标机需 Docker Engine、Compose V2、Bash、tar，以及 SHA256 校验工具。数据盘建议由运维提供独立容量与异机备份位置；卷实际位于 Docker 数据根，不能把部署目录所在盘的空间当作数据库预算。
+适用 **新 PostgreSQL 数据目录**；旧 SQLite、旧 schema 账本、现有非空业务 schema 或其他项目的卷不走这条首装路径。目标机需 Docker Engine、Compose 2.20 或以上、Bash、tar，以及 SHA256 校验工具。数据盘建议由运维提供独立容量与异机备份位置；卷实际位于 Docker 数据根，不能把部署目录所在盘的空间当作数据库预算。
 
 上传到服务器的工作目录，然后校验外层包。以下文件名替换为本次实际文件名：
 

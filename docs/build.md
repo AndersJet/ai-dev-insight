@@ -48,11 +48,27 @@ For your own registry, explicitly supply `--image-prefix` and a verified tag. No
 
 ## First deployment
 
-The target is Linux amd64/arm64 with Docker, Bash and Docker Compose V2 2.20 or newer, plus the tools listed in [deployment operations](../deploy/manual/README.md). Transfer the install package, follow that document, and use a fresh environment directory.
+The target is Linux amd64/arm64 with Docker, Bash and Docker Compose 2.20 or newer, plus the tools listed in [deployment operations](../deploy/manual/README.md). Transfer the install package, follow that document, and use a fresh environment directory.
 
 Configure a deployment-managed administrator, random database/application passwords, Web origin and collection URL. `ADI_EMAIL_DOMAINS` is empty by default; a comma-separated list restricts account admission. A domain allowlist does not verify mailbox ownership.
 
 Verify initialization, service readiness, login/roles, plugin connection, synthetic event persistence and derivation separately. Readiness alone does not establish end-to-end collection.
+
+## Local offline-package acceptance on macOS
+
+A macOS machine can exercise these packages through its Linux Docker engine. On Apple Silicon, build and export `linux/arm64`; the services still run as Linux containers. Use Docker Compose 2.20 or newer, including current 5.x releases.
+
+Use a private configuration based on `deploy/manual/.env.example`. Set a unique `COMPOSE_PROJECT_NAME`, unused Web/Collector ports, loopback Web binding and matching public URLs. Keep the filled configuration outside the source tree. Use a new absolute deployment directory visible to Docker:
+
+```sh
+bash /path/to/install.run install --env test --root /absolute/offline-test --config /absolute/private/test.env
+bash /path/to/upgrade.run upgrade --env test --root /absolute/offline-test
+bash /path/to/upgrade.run status --env test --root /absolute/offline-test
+```
+
+Use the actual generated package filenames. The root must be a separate directory without spaces. If the default temporary directory is not shared with Docker, set `TMPDIR` to a private writable directory that is shared. The deployment entry point uses the packaged images without registry access; package creation itself needs the source dependencies and pinned base/database images.
+
+For a version-transition check, install an earlier reviewed community commit, create synthetic accounts and Hook sessions, then upgrade to the target commit. Verify browser login, old and new sessions, unchanged data-volume identities and credentials, plus the complete pre-upgrade backup. Also test the target install package in a separate fresh environment. Do not use real employee data or a live deployment for this exercise. macOS Docker acceptance does not establish production Linux or real Trae IDE compatibility.
 
 ## Upgrades and recovery
 

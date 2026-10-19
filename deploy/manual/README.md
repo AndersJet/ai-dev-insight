@@ -12,7 +12,7 @@
 
 ## 1. 准备和下载
 
-服务器需为 Linux amd64 或 arm64，具备 Bash、Docker、tar、gzip、SHA256 校验工具和 Docker Compose V2 **2.20 或以上**。首次交互安装还需 openssl。目标用户需有 Docker 和部署目录的操作权限。脚本不会在服务器下载软件或拉取镜像。
+服务器需为 Linux amd64 或 arm64，具备 Bash、Docker、tar、gzip、SHA256 校验工具和 Docker Compose **2.20 或以上**。首次交互安装还需 openssl。目标用户需有 Docker 和部署目录的操作权限。脚本不会在服务器下载软件或拉取镜像。
 
 先按源码仓库的 `docs/build.md`构建四应用镜像，再从同一提交生成 install/upgrade 两种 `.run` 文件。社区版不要求维护者的 GitLab、Harbor、Nexus 或下载账号。
 
