@@ -1,0 +1,9 @@
+{
+  "extends": "@adi/tsconfig/vue.json",
+  "compilerOptions": {},
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "vite.config.ts"
+  ]
+}

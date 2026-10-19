@@ -1,0 +1,28 @@
+import {e2eArtifact} from './helpers/environment.mjs';
+import { test, expect } from './helpers/browser.js';
+import { readFileSync } from 'node:fs';
+test('real import preview blocks duplicates and an independent worker commits the corrected file', async ({ page }) => {
+  const fixture: { admin: { email: string; password: string } } = JSON.parse(readFileSync(e2eArtifact('e2e-credentials.json'), 'utf8'));
+  await page.goto('/login'); await page.getByLabel('邮箱', { exact: true }).fill(fixture.admin.email); await page.getByLabel('密码', { exact: true }).fill(fixture.admin.password); await page.getByRole('button', { name: '登录', exact: true }).click(); await expect(page).toHaveURL(/\/organization$/);
+  const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'adi_csrf')?.value ?? '';
+  const response = await page.request.post('/api/v1/departments', { headers: { 'x-csrf-token': csrf }, data: { name: '文件导入验收部' } }); const id = (await response.json()).data.id;
+  await page.goto(`/organization-management/${id}/members`);
+  const download = page.waitForEvent('download'); await page.getByRole('link', { name: '下载模板', exact: true }).click(); expect((await download).suggestedFilename()).toContain('成员模板.xlsx');
+  await page.getByRole('button', { name: '批量导入', exact: true }).click();
+  await page.getByLabel('选择成员文件').setInputFiles({ name: 'duplicates.csv', mimeType: 'text/csv', buffer: Buffer.from('工作邮箱,姓名\nupload-e2e@example.invalid,成员甲\nUPLOAD-E2E@example.invalid,成员乙\n') });
+  await expect(page.getByText('错误 2', { exact: true })).toBeVisible(); await expect(page.getByRole('button', { name: '确认整批导入' })).toBeDisabled();
+  await page.getByLabel('选择成员文件').setInputFiles({ name: 'correct.csv', mimeType: 'text/csv', buffer: Buffer.from('工作邮箱,姓名\nupload-e2e@example.invalid,导入验收成员\n') });
+  await expect(page.getByText('新增 1', { exact: true })).toBeVisible(); await expect(page.getByText('错误 0', { exact: true })).toBeVisible();
+  const importDialog=page.getByRole('dialog',{name:'批量导入成员',exact:true});
+  await importDialog.getByRole('button',{name:'刷新导入记录',exact:true}).click();
+  await expect(importDialog.getByRole('button',{name:'刷新导入记录',exact:true})).toBeEnabled();
+  await expect(importDialog).toContainText('导入验收成员');await expect(importDialog).toContainText('correct.csv');
+  await expect(importDialog.getByRole('button',{name:'确认整批导入',exact:true})).toBeEnabled();
+  await page.getByRole('button', { name: '确认整批导入' }).click(); await expect(page.getByText('整批导入成功', { exact: true })).toBeVisible();
+  await importDialog.getByRole('button',{name:'刷新导入记录',exact:true}).click();
+  await expect(importDialog.getByRole('button',{name:'刷新导入记录',exact:true})).toBeEnabled();
+  await expect(importDialog.getByText('整批导入成功',{exact:true})).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '批量导入成员' })).not.toBeVisible();
+  const row = page.getByRole('row').filter({ hasText: 'upload-e2e@example.invalid' }); await expect(row).toBeVisible(); await expect(row.getByText('未完成注册', { exact: true })).toBeVisible();
+});

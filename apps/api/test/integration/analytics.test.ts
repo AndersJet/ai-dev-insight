@@ -1,0 +1,32 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { testDatabase } from '../../../../packages/storage/test/helpers.js';
+import { createIdentityService } from '../../../../packages/domain/src/identity.js';
+import { createAnalyticsService } from '../../../../packages/domain/src/analytics.js';
+import { createApi } from '../../src/app.js';
+
+test('analytics HTTP endpoints validate ranges and scopes and return typed empty statistics without invented usage', async t => {
+  const db = await testDatabase(t); await db.migrate();
+  const identity = createIdentityService(db, { emailDomains: ['example.invalid'] });
+  const initial = await identity.bootstrap({ email: 'analytics-api@example.invalid', name: '统计API' });
+  const temp = await identity.login('analytics-api@example.invalid', initial.temporaryPassword);
+  const root = await identity.changePassword(temp.token, initial.temporaryPassword, 'analytics-api-password');
+  const analytics = createAnalyticsService(db, identity); const api = createApi(undefined, { identity, analytics }); t.after(() => api.close());
+  assert.equal((await api.inject('/api/v1/analytics/overview')).statusCode, 401);
+  const headers = { cookie: `adi_session=${root.token}` };
+  const overview = await api.inject({ url: '/api/v1/analytics/overview?scope=self', headers });
+  assert.equal(overview.statusCode, 200); const data = overview.json().data;
+  assert.equal(data.coverage_ratio, null); assert.equal(data.observed_users, 0); assert.equal(data.quality.state, 'ready');
+  assert.equal(data.quality.source_watermark, null); assert.equal(data.scope.kind, 'self');
+  assert.equal((await api.inject({ url: '/api/v1/analytics/overview?user_id=another-user', headers })).statusCode, 400);
+  assert.equal((await api.inject({ url: '/api/v1/analytics/overview?from=2020-01-01T00:00:00Z&to=2020-02-01T00:00:00Z', headers })).statusCode, 422);
+  const estimate = await api.inject({ url: '/api/v1/analytics/content-estimate?scope=self', headers });
+  assert.equal(estimate.statusCode, 200); assert.equal(estimate.json().data.estimate.tokens, '0'); assert.equal(estimate.json().data.estimate.reason, 'no_observations');
+  const trend = await api.inject({ url: '/api/v1/analytics/trends?scope=self', headers });
+  assert.equal(trend.statusCode, 200); assert.equal(trend.json().data.items.length, 7);
+  assert.equal((await api.inject({ url: '/api/v1/analytics/departments', headers })).statusCode, 200);
+  assert.equal((await api.inject({ url: '/api/v1/analytics/members', headers })).statusCode, 422);
+  const department=(await db.query("INSERT INTO departments(id,name) VALUES(gen_random_uuid(),'成员API部门') RETURNING id")).rows[0]!.id as string;await db.query("INSERT INTO membership_periods(user_id,department_id,valid_from) VALUES($1,$2,clock_timestamp()-interval '1 day')",[root.user.user_id,department]);
+  const member=await api.inject({url:`/api/v1/analytics/members/${root.user.user_id}?department_id=${department}`,headers});assert.equal(member.statusCode,200);assert.equal(member.json().data.scope.member.id,root.user.user_id);assert.equal(member.json().data.prompt_turns,0);
+  assert.equal((await api.inject({url:`/api/v1/analytics/members/${root.user.user_id}`,headers})).statusCode,422);assert.equal((await api.inject({url:`/api/v1/analytics/members/${root.user.user_id}?department_id=${department}&member_id=${root.user.user_id}`,headers})).statusCode,400);
+});

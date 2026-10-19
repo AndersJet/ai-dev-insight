@@ -1,0 +1,97 @@
+{
+  "name": "adi-project-tracker",
+  "displayName": "AI Dev Insight Token分析助手",
+  "description": "本机登录和平台通信，支持本地及 Remote SSH 的 Hook 与 Git 观测",
+  "publisher": "ai-dev-insight",
+  "icon": "media/adi-icon.png",
+  "version": "1.0.6",
+  "private": true,
+  "engines": {
+    "vscode": "^1.107.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./dist/extension.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:acceptance": "node scripts/build-acceptance.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.107.0",
+    "esbuild": "0.25.12",
+    "typescript": "^5.9.0",
+    "tsx": "^4.0.0",
+    "@types/node": "^24.0.0",
+    "@adi/contracts": "workspace:*"
+  },
+  "contributes": {
+    "configuration": {
+      "title": "AI Dev Insight Token分析助手",
+      "properties": {
+        "adiProjectTracker.webUrl": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "平台 HTTP/HTTPS 根地址，例如 http://example.invalid:4181；地址变化需重新登录"
+        },
+        "adiProjectTracker.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "启用当前本机及其 Remote SSH 窗口的 Git 与 Hook 采集；关闭后保持暂停"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "adiProjectTracker.open",
+        "title": "ADI: 今日概览"
+      },
+      {
+        "command": "adiProjectTracker.authorize",
+        "title": "ADI: 登录或重新绑定"
+      },
+      {
+        "command": "adiProjectTracker.repair",
+        "title": "ADI: 重试 Hook 安装"
+      },
+      {
+        "command": "adiProjectTracker.installRemoteHelper",
+        "title": "ADI: 安装配套 Remote SSH 助手"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "adiProjectTracker",
+          "title": "AI Dev Insight",
+          "icon": "media/adi.svg"
+        }
+      ]
+    },
+    "views": {
+      "adiProjectTracker": [
+        {
+          "id": "adiProjectTracker.overview",
+          "name": "今日概览",
+          "type": "webview"
+        }
+      ]
+    }
+  },
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AndersJet/ai-dev-insight.git"
+  }
+}

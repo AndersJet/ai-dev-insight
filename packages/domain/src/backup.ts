@@ -1,0 +1,28 @@
+import {randomUUID,createHash} from 'node:crypto';import {constants} from 'node:fs';import {mkdir,lstat,open,rename} from 'node:fs/promises';import {join,isAbsolute} from 'node:path';
+import {writePostgresDump,writeRecoveryArtifact,type Database,type CleanupJournal,type DumpCommand} from '@adi/storage';import {createCleanupCheckpoint} from './recovery.js';import {DomainError} from './errors.js';
+const fail=(code:string)=>new DomainError(code,409);
+export function createBackupService(db:Database,journal:CleanupJournal,options:{directory:string;dump:DumpCommand;maxBytes:string;maxDurationMs:number;signal?:AbortSignal}){
+ if(!isAbsolute(options.directory)||process.platform==='win32'||!/^[1-9]\d{0,17}$/.test(options.maxBytes)||!Number.isSafeInteger(options.maxDurationMs)||options.maxDurationMs<1000||options.maxDurationMs>3600000)throw fail('backup_configuration_required');
+ async function syncDirectory(path:string){const file=await open(path,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);try{await file.sync();}finally{await file.close();}}
+ async function create(expectedDataset:string){if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(expectedDataset))throw fail('invalid_dataset');const info=await lstat(options.directory);if(!info.isDirectory()||info.isSymbolicLink()||(info.mode&0o077)!==0)throw fail('backup_private_directory_required');
+  const id=randomUUID(),path=join(options.directory,id),startedAt=new Date().toISOString(),abort=new AbortController();if(options.signal?.aborted)throw fail('backup_aborted');await mkdir(path,{mode:0o700});await syncDirectory(options.directory);let timedOut=false;const cancel=()=>abort.abort();options.signal?.addEventListener('abort',cancel,{once:true});const deadline=setTimeout(()=>{timedOut=true;abort.abort();},options.maxDurationMs);let keeper:ReturnType<typeof setInterval>|undefined,pulse:Promise<unknown>|undefined,keepaliveError:unknown;
+  try{
+   const manifest=await db.transaction(async sql=>{
+    await sql.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    for(const lock of ['migrate','partitions','retention'])await sql.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[`adi:${lock}:${db.schema}`]);
+    const source=(await sql.query<{dataset_id:string;recovery_id:string|null;server_version:string;encoding:string}>("SELECT dataset_id,recovery_id,current_setting('server_version_num') AS server_version,current_setting('server_encoding') AS encoding FROM data_identity")).rows[0];if(!source||source.dataset_id!==expectedDataset)throw fail('dataset_identity_changed');if(source.recovery_id)throw fail('backup_source_not_normal');if(!/^18\d{4}$/.test(source.server_version)||source.encoding!=='UTF8')throw fail('backup_engine_unsupported');
+    const snapshot=String((await sql.query('SELECT pg_export_snapshot() AS snapshot')).rows[0]!.snapshot),migrations=(await sql.query('SELECT m.name,c.checksum FROM pgmigrations m JOIN migration_checksums c ON c.name=m.name ORDER BY m.id')).rows;
+    const snapshotDb={query:sql.query,assertNotRecovering:async()=>{if((await sql.query('SELECT recovery_id FROM data_identity')).rows[0]?.recovery_id)throw fail('recovery_quarantined');}};
+    keeper=setInterval(()=>{if(pulse||abort.signal.aborted)return;pulse=sql.query('SELECT 1').catch(error=>{keepaliveError=error;abort.abort();}).finally(()=>{pulse=undefined;});},2000);
+    const checkpoint=await createCleanupCheckpoint(snapshotDb,journal,expectedDataset),dump=await writePostgresDump(options.dump,{schema:db.schema,snapshot,path:join(path,'database.partial'),maxBytes:options.maxBytes,signal:abort.signal});
+    await journal.verifyCheckpoint(expectedDataset,checkpoint).catch(()=>{throw fail('backup_cleanup_changed');});if(keepaliveError)throw fail('backup_snapshot_lost');if(abort.signal.aborted)throw fail('backup_deadline');
+    const counts=(await sql.query("SELECT (SELECT count(*)::text FROM hook_events) AS hook_events,(SELECT count(*)::text FROM sessions) AS sessions,(SELECT count(*)::text FROM users) AS users")).rows[0]!;
+    clearInterval(keeper);await pulse;if(keepaliveError)throw fail('backup_snapshot_lost');
+    return {version:1 as const,kind:'postgres_schema_backup' as const,backup_id:id,dataset_id:expectedDataset,source_schema:db.schema,started_at:startedAt,finished_at:new Date().toISOString(),snapshot,server_version:source.server_version,encoding:source.encoding,migrations_digest:createHash('sha256').update(JSON.stringify(migrations)).digest('hex'),migrations,cleanup_checkpoint:checkpoint,archive:{file:'database.dump',...dump},counts,external_dependencies:['btree_gist'],restore_verified:false,latest_journal_required:true};
+   });
+   if(abort.signal.aborted)throw fail(timedOut?'backup_deadline':'backup_aborted');await rename(join(path,'database.partial'),join(path,'database.dump'));await syncDirectory(path);const saved=await writeRecoveryArtifact(join(path,'manifest.json'),manifest);return {...saved,backup_id:id,archive_bytes:manifest.archive.bytes,archive_sha256:manifest.archive.sha256,restore_verified:false};
+  }catch(error){const normalized=abort.signal.aborted?fail(timedOut?'backup_deadline':'backup_aborted'):error;const code=normalized&&typeof normalized==='object'&&'code'in normalized&&typeof normalized.code==='string'&&/^(backup|cleanup_checkpoint|dataset_identity)_[a-z_]+$/.test(normalized.code)?normalized.code:'backup_failed';await writeRecoveryArtifact(join(path,'failure.json'),{backup_id:id,failed_at:new Date().toISOString(),code}).catch(()=>{});throw normalized;}
+  finally{clearInterval(keeper);clearTimeout(deadline);options.signal?.removeEventListener('abort',cancel);await pulse;}
+ }
+ return {create};
+}

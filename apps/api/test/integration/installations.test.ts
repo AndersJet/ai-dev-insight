@@ -1,0 +1,43 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { testDatabase } from '../../../../packages/storage/test/helpers.js';
+import { createIdentityService } from '../../../../packages/domain/src/identity.js';
+import { createOrganizationService } from '../../../../packages/domain/src/organization.js';
+import { createAdministrationService } from '../../../../packages/domain/src/administration.js';
+import { createInstallationService } from '../../../../packages/domain/src/installations.js';
+import { createApi } from '../../src/app.js';
+test('account collection HTTP enforces CSRF, password change, owner scope and read/revoke-only administration', async t => {
+  const db = await testDatabase(t); await db.migrate(); const identity = createIdentityService(db, { emailDomains: ['example.invalid'] });
+  const seed = await identity.bootstrap({ email: 'install-api-root@example.invalid', name: '采集API超管' });
+  const temporary = await identity.login('install-api-root@example.invalid', seed.temporaryPassword);
+  const installations = createInstallationService(db, identity, { encryptionKey: Buffer.alloc(32, 4) });
+  const app = createApi(undefined, { identity, installations }); t.after(() => app.close());
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/me/collection-credential/reset', headers: { cookie: `adi_session=${temporary.token}`, 'x-csrf-token': temporary.csrfToken }, payload: {} })).statusCode, 403);
+  const root = await identity.changePassword(temporary.token, seed.temporaryPassword, 'install-api-root-password');
+  const headers = { cookie: `adi_session=${root.token}`, 'x-csrf-token': root.csrfToken };
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/me/collection-credential/reset', headers: { cookie: headers.cookie }, payload: {} })).statusCode, 403);
+  const org = createOrganizationService(db, identity), dept = await org.createDepartment(root.token, '采集HTTP部门');
+  const member = await org.addMember(root.token, dept.id, { email: 'install-api-person@example.invalid', display_name: 'HTTP员工' });
+  const password = await identity.resetPassword(root.token, member.user_id, member.version), temp = await identity.login(member.email, password.temporaryPassword);
+  const employee = await identity.changePassword(temp.token, password.temporaryPassword, 'install-api-person-password');
+  await db.query('UPDATE users SET registered_at=now()');
+  const issued = await installations.credential(employee.token);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/v1/admin/users/${member.user_id}/installations`, headers, payload: { label: '已取消代发' } })).statusCode, 404);
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/me/installations', headers, payload: { label: '已取消设备安装' } })).statusCode, 404);
+  const admin = createAdministrationService(db, identity);
+  for (const role of ['employee', 'department_admin', 'anc_admin'] as const) {
+    const account = await admin.getAccount(root.token, member.user_id);
+    await admin.setAccess(root.token, member.user_id, { version: account.version, global_roles: role === 'anc_admin' ? ['anc_admin'] : [], department_ids: role === 'department_admin' ? [dept.id] : [] });
+    const session = await identity.login(member.email, 'install-api-person-password');
+    const personal = { cookie: `adi_session=${session.token}`, 'x-csrf-token': session.csrfToken };
+    const own = await app.inject({ url: '/api/v1/me/collection-credential', headers: personal }); assert.equal(own.statusCode, 200); assert.equal(own.json().data.installation.id, issued.installation.id);
+    assert.ok(!own.body.includes(issued.token)); assert.ok(!own.body.includes('token_hash')); assert.ok(!own.body.includes('credential_ciphertext'));
+    assert.equal((await app.inject({ url: `/api/v1/admin/users/${seed.userId}/collection-credential`, headers: personal })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'DELETE', url: `/api/v1/admin/users/${seed.userId}/collection-credential`, headers: personal })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/v1/me/collection-credential/reset', headers: personal, payload: { user_id: seed.userId } })).statusCode, 400);
+  }
+  const visible = await app.inject({ url: `/api/v1/admin/users/${member.user_id}/collection-credential`, headers });
+  assert.equal(visible.statusCode, 200); assert.ok(!visible.body.includes(issued.token));
+  assert.equal((await app.inject({ method: 'DELETE', url: `/api/v1/admin/users/${member.user_id}/collection-credential`, headers })).statusCode, 204);
+  assert.equal((await installations.statusForUser(root.token, member.user_id)).reset_required, true);
+});

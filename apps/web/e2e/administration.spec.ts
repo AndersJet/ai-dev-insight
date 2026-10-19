@@ -1,0 +1,72 @@
+import {environment as e2eEnv,e2eArtifact} from './helpers/environment.mjs';
+import { test, expect } from './helpers/browser.js';
+import { readFileSync } from 'node:fs';
+test('superadmin manages roles and credentials while 组织 cannot access global account APIs', async ({ page, browser }) => {
+  const fixture: { admin: { email: string; password: string } } = JSON.parse(readFileSync(e2eArtifact('e2e-credentials.json'), 'utf8'));
+  await page.goto('/login'); await page.getByLabel('邮箱', { exact: true }).fill(fixture.admin.email); await page.getByLabel('密码', { exact: true }).fill(fixture.admin.password); await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page).toHaveURL(/\/organization$/);
+  const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'adi_csrf')?.value ?? '';
+  const department = await page.request.post('/api/v1/departments', { headers: { 'x-csrf-token': csrf }, data: { name: '账号验收部' } });
+  const departmentId = (await department.json()).data.id;
+  const created = await page.request.post(`/api/v1/departments/${departmentId}/members`, { headers: { 'x-csrf-token': csrf }, data: { email: 'account-e2e@example.org', display_name: '账号验收员' } });
+  expect(created.status()).toBe(201);
+  await page.goto(`/organization-management/${departmentId}/members`);
+  const row = page.getByRole('row').filter({ hasText: 'account-e2e@example.org' });
+  await row.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem', { name: '角色与管理范围授权' }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: '角色', exact: true }).press('ArrowDown'); await page.getByRole('option', { name: '组织管理员', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click(); await expect(row.getByText('组织管理员', { exact: true })).toBeVisible();
+  await row.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem', { name: '发放 / 重置密码' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '生成临时密码' }).click();
+  const temporary = await page.getByRole('dialog').getByLabel('临时密码', { exact: true }).inputValue(); expect(temporary.length).toBeGreaterThan(20);
+  await page.getByRole('button', { name: '已保存，关闭' }).click();
+  const otherContext = await browser.newContext(); const other = await otherContext.newPage();
+  try {
+    await other.goto(e2eEnv.webURL+'/login'); await other.getByLabel('邮箱', { exact: true }).fill('account-e2e@example.org'); await other.getByLabel('密码', { exact: true }).fill(temporary); await other.getByRole('button', { name: '登录', exact: true }).click();
+    await other.getByLabel('当前密码', { exact: true }).fill(temporary); await other.getByLabel('新密码', { exact: true }).fill('account-e2e-regular-password'); await other.getByLabel('确认新密码', { exact: true }).fill('account-e2e-regular-password'); await other.getByRole('button', { name: '保存并继续' }).click();
+    await expect(other).toHaveURL(/\/register$/);
+    await other.getByRole('button',{name:'完成注册并进入采集安装',exact:true}).click();
+    await expect(other).toHaveURL(/\/my\/installations$/);
+    await page.reload(); // Registration changes the account version.
+    await expect(other.getByRole('navigation', { name: '一级导航' }).getByRole('link', { name: '组织管理', exact: true })).toBeVisible();
+    await expect(other.getByRole('navigation').getByRole('link', { name: '系统运营', exact: true })).toHaveCount(0);
+    expect((await other.request.get(e2eEnv.webURL+'/api/v1/admin/users')).status()).toBe(403);
+    await row.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem', { name: '停用账号', exact: true }).click();
+    await page.getByRole('dialog').getByLabel('操作原因').fill('端到端验证停用'); await page.getByRole('dialog').getByRole('button', { name: '确认停用', exact: true }).click();
+    await expect(row.getByText('已停用', { exact: true })).toBeVisible();
+    await other.reload(); await expect(other.getByRole('heading', { name: '登录工作空间' })).toBeVisible();
+    await row.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem', { name: '恢复账号', exact: true }).click();
+    await page.getByRole('dialog').getByLabel('操作原因').fill('端到端验证恢复'); await page.getByRole('dialog').getByRole('button', { name: '确认恢复', exact: true }).click(); await expect(row.getByText('启用', { exact: true })).toBeVisible();
+    await row.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem', { name: '角色与管理范围授权' }).click();
+    await page.getByRole('dialog').getByRole('combobox', { name: '角色', exact: true }).press('ArrowDown'); await page.getByRole('option', { name: '一级部门管理员', exact: true }).click();
+    await page.getByRole('dialog').getByRole('combobox', { name: '管理范围', exact: true }).press('ArrowDown'); await page.getByRole('option', { name: '账号验收部', exact: true }).click(); await page.getByRole('dialog').getByRole('combobox', { name: '管理范围', exact: true }).press('Escape');
+    await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click(); await expect(row.getByText('一级部门管理员', { exact: true })).toBeVisible();
+    await other.getByLabel('邮箱', { exact: true }).fill('account-e2e@example.org'); await other.getByLabel('密码', { exact: true }).fill('account-e2e-regular-password'); await other.getByRole('button', { name: '登录', exact: true }).click();
+    await expect(other.getByRole('navigation').getByRole('link', { name: '组织管理', exact: true })).toBeVisible();
+    await expect(other.getByRole('complementary').getByRole('link', { name: '部门配置', exact: true })).toHaveCount(0);
+    expect((await other.request.get(e2eEnv.webURL+'/api/v1/members')).status()).toBe(403);
+    const otherCsrf = (await otherContext.cookies()).find(cookie => cookie.name === 'adi_csrf')?.value ?? '';
+    expect((await other.request.post(`${e2eEnv.webURL}/api/v1/departments/${departmentId}/members`, { headers: { 'x-csrf-token': otherCsrf }, data: { email: 'scoped-e2e@example.invalid', display_name: '本部门新增' } })).status()).toBe(201);
+    expect((await other.request.post(e2eEnv.webURL+'/api/v1/departments', { headers: { 'x-csrf-token': otherCsrf }, data: { name: '禁止越权创建' } })).status()).toBe(403);
+  } finally { await otherContext.close(); }
+});
+
+test('configuration administrator logs in directly, has no password route and shows protected account guidance', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('邮箱', { exact: true }).fill('e2e-config@example.invalid');
+  await page.getByLabel('密码', { exact: true }).fill('e2e-configuration-password');
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page).toHaveURL(/\/organization$/);
+  await page.goto('/my/overview');
+  await expect(page.getByRole('link', { name: '修改密码', exact: true })).toHaveCount(0);
+  await page.goto('/change-password');
+  await expect(page).toHaveURL(/\/organization$/);
+  await page.goto('/organization-management/all/members');
+  await page.getByRole('textbox', { name: '搜索成员', exact: true }).fill('e2e-config@example.invalid');
+  await page.getByRole('button', { name: '查询', exact: true }).click();
+  const row = page.getByRole('row').filter({ hasText: 'e2e-config@example.invalid' });
+  await row.getByRole('button', { name: '更多', exact: true }).click();
+  await page.getByRole('menuitem', { name: '发放 / 重置密码' }).click();
+  await expect(page.getByRole('dialog').getByText('此账号由部署配置管理', { exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog').getByRole('button', { name: '生成临时密码' })).toBeDisabled();
+  await expect(page.getByRole('dialog').getByLabel('临时密码', { exact: true })).toHaveCount(0);
+});

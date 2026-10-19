@@ -1,0 +1,29 @@
+{
+  "name": "@adi/domain",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./member-file": {
+      "types": "./dist/member-file.d.ts",
+      "import": "./dist/member-file.js"
+    },
+    "./member-file-worker": "./dist/member-file-worker.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@adi/contracts": "workspace:*",
+    "@adi/storage": "workspace:*",
+    "@adi/tsconfig": "workspace:*",
+    "csv-parse": "7.0.2",
+    "exceljs": "4.4.0"
+  },
+  "license": "Apache-2.0"
+}

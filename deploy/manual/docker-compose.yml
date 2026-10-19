@@ -1,0 +1,184 @@
+# Offline deployment: five resident containers and two one-shot tasks.
+name: ${COMPOSE_PROJECT_NAME:-ai-dev-insight}
+x-runtime: &runtime
+  init: true
+  restart: unless-stopped
+  pull_policy: never
+  read_only: true
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 128
+  stop_grace_period: 15s
+  logging:
+    driver: json-file
+    options: {max-size: "5m", max-file: "2"}
+x-database: &database
+  NODE_ENV: production
+  ADI_DATABASE_URL: postgresql://adi_app:${ADI_APP_DB_PASSWORD:?provide a URL-safe application password}@postgres:5432/adi
+  ADI_DATABASE_SCHEMA: ${ADI_DATABASE_SCHEMA:-adi}
+
+services:
+  # Reuses the API image; fixes only the two private named-volume roots.
+  prepare-storage:
+    image: ai-dev-insight-offline-api:latest
+    pull_policy: never
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - chown 1000:1000 /var/lib/adi-cleanup /var/lib/adi-credentials; chmod 0700 /var/lib/adi-cleanup /var/lib/adi-credentials
+    volumes:
+      - cleanup-journal:/var/lib/adi-cleanup
+      - collection-keys:/var/lib/adi-credentials
+    mem_limit: 64m
+    pids_limit: 32
+
+  postgres:
+    image: ai-dev-insight-offline-postgres:18.6
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: adi_bootstrap
+      POSTGRES_DB: adi
+      POSTGRES_PASSWORD: ${ADI_PG_ADMIN_PASSWORD:?provide a database bootstrap password}
+      ADI_APP_DB_PASSWORD: ${ADI_APP_DB_PASSWORD:?provide the application role password}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - type: bind
+        source: ./postgres-init.sql
+        target: /docker-entrypoint-initdb.d/10-adi.sql
+        read_only: true
+        bind: {create_host_path: false}
+    command: ["postgres", "-c", "max_connections=40", "-c", "shared_buffers=512MB", "-c", "work_mem=4MB", "-c", "max_wal_size=256MB"]
+    mem_limit: 2g
+    cpus: 1
+    shm_size: 128m
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+    healthcheck:
+      # The first-boot server is Unix-socket-only; wait for the final TCP server
+      # and bootstrap objects so a failed init script cannot look healthy.
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -h 127.0.0.1 -U adi_bootstrap -d adi
+          && psql -U adi_bootstrap -d adi -Atc
+          "SELECT 1 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname='adi_app' AND rolcanlogin)
+          AND EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace
+          WHERE e.extname='btree_gist' AND n.nspname='public')
+          AND EXISTS (SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace
+          WHERE e.extname='pg_trgm' AND n.nspname='public')"
+          | grep -qx 1
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  initialize:
+    <<: *runtime
+    restart: "no"
+    image: ai-dev-insight-offline-api:latest
+    command: ["node", "apps/api/dist/cli.js", "init"]
+    environment:
+      <<: *database
+      ADI_EMAIL_DOMAINS: ${ADI_EMAIL_DOMAINS:-}
+      ADI_ADMIN_EMAIL: ${ADI_ADMIN_EMAIL:?provide the configuration administrator email}
+      ADI_ADMIN_PASSWORD: ${ADI_ADMIN_PASSWORD:?provide the configuration administrator password}
+      ADI_INSTALLATION_KEY_FILE: /var/lib/adi-credentials/installation.key
+    depends_on:
+      postgres: {condition: service_healthy}
+      prepare-storage: {condition: service_completed_successfully}
+    volumes: ["collection-keys:/var/lib/adi-credentials"]
+    mem_limit: 512m
+    cpus: 0.5
+
+  api:
+    <<: *runtime
+    image: ai-dev-insight-offline-api:latest
+    environment:
+      <<: *database
+      ADI_EMAIL_DOMAINS: ${ADI_EMAIL_DOMAINS:-}
+      ADI_WEB_ORIGIN: ${ADI_WEB_ORIGIN:?provide the exact HTTP or HTTPS web origin}
+      ADI_PUBLIC_COLLECTOR_URL: ${ADI_PUBLIC_COLLECTOR_URL:?provide the HTTP or HTTPS hooks URL}
+      ADI_INSTALLATION_KEY_FILE: /var/lib/adi-credentials/installation.key
+
+      ADI_CLEANUP_JOURNAL_DIR: /var/lib/adi-cleanup
+      ADI_USAGE_PROVIDER_ACCOUNT: ${ADI_USAGE_PROVIDER_ACCOUNT:-}
+      ADI_USAGE_STOP_WINDOW_ENABLED: ${ADI_USAGE_STOP_WINDOW_ENABLED:-false}
+      ADI_STORAGE_BUDGET_BYTES: ${ADI_STORAGE_BUDGET_BYTES:-}
+    volumes:
+      - collection-keys:/var/lib/adi-credentials
+      - cleanup-journal:/var/lib/adi-cleanup
+    depends_on:
+      initialize: {condition: service_completed_successfully}
+    mem_limit: 768m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4180/api/v1/me',{signal:AbortSignal.timeout(1500)}).then(r=>process.exit(r.status===401?0:1)).catch(()=>process.exit(1))"]
+      # First complete publication plus full metadata warm precede listening.
+      start_period: 120s
+      interval: 10s
+      timeout: 2s
+      retries: 3
+
+  collector:
+    <<: *runtime
+    image: ai-dev-insight-offline-collector:latest
+    environment: *database
+    ports: ["127.0.0.1:${ADI_COLLECTOR_HOST_PORT:-4186}:4186"]
+    depends_on:
+      initialize: {condition: service_completed_successfully}
+    mem_limit: 1g
+    cpus: 1.25
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4186/readyz',{signal:AbortSignal.timeout(1500)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+
+  worker:
+    <<: *runtime
+    image: ai-dev-insight-offline-worker:latest
+    environment:
+      <<: *database
+      ADI_EMAIL_DOMAINS: ${ADI_EMAIL_DOMAINS:-}
+      ADI_CLEANUP_JOURNAL_DIR: /var/lib/adi-cleanup
+      ADI_USAGE_ENABLED: ${ADI_USAGE_ENABLED:-false}
+      ADI_USAGE_STOP_WINDOW_ENABLED: ${ADI_USAGE_STOP_WINDOW_ENABLED:-false}
+      ADI_USAGE_PROVIDER_ACCOUNT: ${ADI_USAGE_PROVIDER_ACCOUNT:-}
+      TRAE_OPENAPI_APP_ID: ${TRAE_OPENAPI_APP_ID:-}
+      TRAE_OPENAPI_APP_SECRET: ${TRAE_OPENAPI_APP_SECRET:-}
+      ADI_STORAGE_BUDGET_BYTES: ${ADI_STORAGE_BUDGET_BYTES:-}
+      ADI_ALERT_WEBHOOK_URL: ${ADI_ALERT_WEBHOOK_URL:-}
+      ADI_ALERT_WEBHOOK_TOKEN: ${ADI_ALERT_WEBHOOK_TOKEN:-}
+    volumes:
+      - cleanup-journal:/var/lib/adi-cleanup
+    depends_on:
+      initialize: {condition: service_completed_successfully}
+    mem_limit: 1536m
+    cpus: 0.6
+
+  web:
+    <<: *runtime
+    image: ai-dev-insight-offline-web:latest
+    ports: ["${ADI_WEB_BIND_ADDRESS:-0.0.0.0}:${ADI_WEB_HOST_PORT:-4181}:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+    mem_limit: 128m
+    cpus: 0.1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+
+volumes:
+  postgres-data:
+  collection-keys:
+  cleanup-journal:

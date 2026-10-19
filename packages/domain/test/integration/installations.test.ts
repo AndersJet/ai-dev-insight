@@ -1,0 +1,134 @@
+import { test, type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import { testDatabase } from '../../../storage/test/helpers.js';
+import { createIdentityService } from '../../src/identity.js';
+import { createOrganizationService } from '../../src/organization.js';
+import { createInstallationService } from '../../src/installations.js';
+const encryptionKey = Buffer.alloc(32, 37);
+async function fixture(t: TestContext) {
+  const db = await testDatabase(t); await db.migrate();
+  const identity = createIdentityService(db, { emailDomains: ['example.invalid'] });
+  const seed = await identity.bootstrap({ email: 'collection-root@example.invalid', name: '采集超管' });
+  const initial = await identity.login('collection-root@example.invalid', seed.temporaryPassword);
+  const root = await identity.changePassword(initial.token, seed.temporaryPassword, 'collection-root-password');
+  const org = createOrganizationService(db, identity), dept = await org.createDepartment(root.token, '采集部门');
+  const person = await org.addMember(root.token, dept.id, { email: 'collection-person@example.invalid', display_name: '采集员工' });
+  const password = await identity.resetPassword(root.token, person.user_id, person.version);
+  const temporary = await identity.login(person.email, password.temporaryPassword);
+  const employee = await identity.changePassword(temporary.token, password.temporaryPassword, 'collection-person-password');
+  await db.query('UPDATE users SET registered_at=now()');
+  return { db, identity, root, employee, person, service: createInstallationService(db, identity, { encryptionKey }) };
+}
+test('account credential is encrypted at rest and repeat downloads survive service restart without rotation', async t => {
+  const { db, identity, employee, service } = await fixture(t);
+  const first = await service.credential(employee.token), again = await createInstallationService(db, identity, { encryptionKey }).credential(employee.token);
+  assert.deepEqual(again, first);
+  const stored = (await db.query('SELECT token_hash,credential_ciphertext FROM installations WHERE id=$1', [first.installation.id])).rows[0]!;
+  assert.equal(stored.token_hash, createHash('sha256').update(first.token).digest('hex'));
+  assert.ok(stored.credential_ciphertext); assert.ok(!JSON.stringify(stored).includes(first.token));
+  const publicStatus = await service.status(employee.token);
+  assert.equal(publicStatus.installation?.id, first.installation.id); assert.equal(publicStatus.reset_required, false);
+  assert.ok(!JSON.stringify(publicStatus).includes(first.token)); assert.ok(!JSON.stringify(publicStatus).includes(stored.token_hash));
+  await assert.rejects(createInstallationService(db, identity, { encryptionKey: Buffer.alloc(32, 38) }).credential(employee.token), { code: 'collection_key_unavailable' });
+  await assert.rejects(createInstallationService(db, identity).reset(employee.token), { code: 'collection_key_unavailable' });
+  assert.deepEqual(await service.credential(employee.token), first); // Failed reset rolled back revocation.
+});
+test('simultaneous first downloads share one credential; reset rejects stale collection and preserves history', async t => {
+  const { db, employee, service } = await fixture(t);
+  const issued = await Promise.all(Array.from({ length: 12 }, () => service.credential(employee.token)));
+  assert.equal(new Set(issued.map(value => value.token)).size, 1);
+  assert.equal((await db.query('SELECT count(*) FROM installations')).rows[0]?.count, '1');
+  const old = issued[0]!, at = new Date();
+  await db.query('UPDATE installations SET last_seen=$1 WHERE id=$2', [at, old.installation.id]);
+  const reset = await service.reset(employee.token), next = await service.credential(employee.token);
+  assert.notEqual(next.token, old.token); assert.notEqual(next.installation.id, old.installation.id);
+  assert.equal(reset.installation?.id, next.installation.id); assert.equal(reset.last_seen, at.toISOString());
+  assert.equal((await db.query('SELECT count(*) FROM installations')).rows[0]?.count, '2');
+  const result = await db.ingest({ schema_version: 2, installation_id: old.installation.id, client_event_id: randomUUID(), occurred_at: at.toISOString(), event_type: 'Stop', source_session_id: 'reset-stale', payload: {} }, { admissionEpoch: 1, receivedAt: at, tokenHash: createHash('sha256').update(old.token).digest('hex') });
+  assert.deepEqual(result, { outcome: 'rejected', reason: 'installation_disabled' });
+  const audit = (await db.query('SELECT action,metadata FROM audit_events')).rows;
+  assert.ok(!JSON.stringify(audit).includes(old.token)); assert.ok(!JSON.stringify(audit).includes(next.token));
+});
+test('only owner can issue/reset; superadmin can inspect/revoke, and downloading cannot revive revoked credentials', async t => {
+  const { root, employee, person, service } = await fixture(t);
+  const mine = await service.credential(employee.token);
+  assert.equal((await service.status(root.token)).installation, null);
+  assert.equal((await service.statusForUser(root.token, person.user_id)).installation?.id, mine.installation.id);
+  await assert.rejects(service.statusForUser(employee.token, root.user.user_id), { code: 'forbidden' });
+  await assert.rejects(service.revokeForUser(employee.token, root.user.user_id), { code: 'forbidden' });
+  await service.revokeForUser(root.token, person.user_id);
+  await service.revokeForUser(root.token, person.user_id);
+  assert.equal((await service.status(employee.token)).reset_required, true);
+  await assert.rejects(service.credential(employee.token), { code: 'collection_reset_required' });
+  await service.reset(employee.token); assert.notEqual((await service.credential(employee.token)).token, mine.token);
+});
+test('hash-only legacy credentials remain active until explicit account reset, and are never deleted', async t => {
+  const { db, employee, person, service } = await fixture(t);
+  for (let i = 0; i < 2; i++) await db.query('INSERT INTO installations(id,user_id,label,token_hash) VALUES($1,$2,$3,$4)', [randomUUID(), person.user_id, '旧设备', createHash('sha256').update(`legacy-${i}`).digest('hex')]);
+  assert.equal((await service.status(employee.token)).legacy_installations, 2);
+  await assert.rejects(service.credential(employee.token), { code: 'collection_reset_required' });
+  assert.equal((await db.query('SELECT count(*) FROM installations WHERE enabled')).rows[0]?.count, '2');
+  await service.reset(employee.token);
+  assert.equal((await db.query('SELECT count(*) FROM installations WHERE enabled')).rows[0]?.count, '1');
+  assert.equal((await db.query('SELECT count(*) FROM installations')).rows[0]?.count, '3');
+  assert.equal((await service.status(employee.token)).legacy_installations, 0);
+});
+test('unregistered or suspended accounts cannot download or reset a credential', async t => {
+  const { db, employee, person, service } = await fixture(t);
+  await db.query('UPDATE users SET registered_at=NULL WHERE id=$1', [person.user_id]);
+  await assert.rejects(service.credential(employee.token), { code: 'registration_required' });
+  await assert.rejects(service.reset(employee.token), { code: 'registration_required' });
+  await db.query("UPDATE users SET registered_at=now(),status='suspended' WHERE id=$1", [person.user_id]);
+  await assert.rejects(service.credential(employee.token), { code: 'unauthenticated' });
+});
+
+test('online grants last 30 minutes from generation and retries never rotate account credentials', async t => {
+  const { db, identity, employee } = await fixture(t);
+  let time = new Date('2026-09-29T00:00:00Z');
+  const service = createInstallationService(db, identity, { encryptionKey, clock: () => time });
+  const credential = await service.credential(employee.token), first = await service.issueDownloadGrant(employee.token);
+  assert.equal(first.expires_at, '2026-09-29T00:30:00.000Z'); assert.equal(first.installation_id, credential.installation.id);
+  assert.ok(!JSON.stringify(first).includes(credential.token));
+  assert.deepEqual(await service.redeemDownloadGrant(first.authorization), credential);
+  const second = await service.issueDownloadGrant(employee.token); assert.notEqual(second.authorization, first.authorization);
+  assert.deepEqual(await service.redeemDownloadGrant(first.authorization), credential);
+  time = new Date('2026-09-29T00:29:59.999Z'); assert.deepEqual(await service.redeemDownloadGrant(first.authorization), credential);
+  time = new Date('2026-09-29T00:30:00Z');
+  await assert.rejects(service.redeemDownloadGrant(first.authorization), { code: 'installation_command_expired', status: 410 });
+  assert.deepEqual(await service.credential(employee.token), credential);
+  const renewed = await service.issueDownloadGrant(employee.token); assert.equal(renewed.expires_at, '2026-09-29T01:00:00.000Z');
+  assert.deepEqual(await service.redeemDownloadGrant(renewed.authorization), credential);
+  assert.equal((await db.query('SELECT count(*) FROM installations')).rows[0]?.count, '1');
+  const audits = JSON.stringify((await db.query('SELECT metadata FROM audit_events')).rows);
+  assert.ok(!audits.includes(first.authorization)); assert.ok(!audits.includes(credential.token));
+});
+test('online grants reject tampering, other purposes, revoked identities and changed account authorization', async t => {
+  const { db, identity, employee, root, person, service } = await fixture(t);
+  const grant = await service.issueDownloadGrant(employee.token), original = await service.credential(employee.token);
+  const [prefix, signature] = grant.authorization.split('.');
+  const altered = prefix + '.' + (signature![0] === 'A' ? 'B' : 'A') + signature!.slice(1);
+  await assert.rejects(service.redeemDownloadGrant(altered), { code: 'invalid_installation_command' });
+  await assert.rejects(service.redeemDownloadGrant(original.token), { code: 'invalid_installation_command' });
+  await assert.rejects(createInstallationService(db, identity, { encryptionKey: Buffer.alloc(32, 38) }).redeemDownloadGrant(grant.authorization), { code: 'invalid_installation_command' });
+  await db.query("UPDATE users SET status='suspended' WHERE id=$1", [person.user_id]);
+  await assert.rejects(service.redeemDownloadGrant(grant.authorization), { code: 'invalid_installation_command' });
+  await db.query("UPDATE users SET status='active' WHERE id=$1", [person.user_id]);
+  await service.reset(employee.token);
+  await assert.rejects(service.redeemDownloadGrant(grant.authorization), { code: 'invalid_installation_command' });
+  const next = await service.issueDownloadGrant(employee.token);
+  await service.revokeForUser(root.token, person.user_id);
+  await assert.rejects(service.redeemDownloadGrant(next.authorization), { code: 'invalid_installation_command' });
+  await service.reset(employee.token);
+  const beforePassword = await service.issueDownloadGrant(employee.token);
+  await identity.changePassword(employee.token, 'collection-person-password', 'collection-person-new-password');
+  await assert.rejects(service.redeemDownloadGrant(beforePassword.authorization), { code: 'invalid_installation_command' });
+});
+test('online download respects the recovery barrier instead of bypassing session authorization', async t => {
+  const { db, employee, service } = await fixture(t);
+  const grant = await service.issueDownloadGrant(employee.token);
+  const recovery = randomUUID();
+  await db.query("INSERT INTO recovery_runs(id,dataset_id,state,operator_label) SELECT $1,dataset_id,'quarantined','online-test' FROM data_identity", [recovery]);
+  await db.query('UPDATE data_identity SET recovery_id=$1', [recovery]);
+  await assert.rejects(service.redeemDownloadGrant(grant.authorization), { code: 'recovery_quarantined' });
+});

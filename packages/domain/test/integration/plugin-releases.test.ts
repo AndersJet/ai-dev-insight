@@ -1,0 +1,57 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {testDatabase} from '../../../storage/test/helpers.js';
+import {createOrganizationService} from '../../src/organization.js';
+import {createRegistrationService} from '../../src/registration.js';
+import {createIdentityService} from '../../src/identity.js';
+import {createPluginReleaseService} from '../../src/plugin-releases.js';
+
+test('正式包只能升版发布，指定试用包允许同版本覆盖并锁定确认的构建',async t=>{
+ const db=await testDatabase(t);await db.migrate();
+ const identity=createIdentityService(db,{emailDomains:['example.org']});
+ const issued=await identity.bootstrap({email:'synthetic.releases@example.org',name:'合成发行管理员'});
+ const initial=await identity.login('synthetic.releases@example.org',issued.temporaryPassword);
+ const root=await identity.changePassword(initial.token,issued.temporaryPassword,'synthetic-release-password');
+ const department=await createOrganizationService(db,identity).createDepartment(root.token,'合成测试');await createRegistrationService(db,identity).activate(root.token,{department_id:department.id});
+ const service=createPluginReleaseService(db,identity);
+ const first=await service.upload(root.token,{version:'1.0.0',build_id:'a'.repeat(64),package:Buffer.from('synthetic VSIX A')});
+ assert.equal(first.state,'draft');assert.equal(await service.current(),null);
+ const pilot=await service.setPilot(root.token,first.id,{build_id:first.build_id,user_ids:[root.user.user_id]});
+ assert.equal(pilot.state,'pilot');assert.deepEqual((await service.testers(root.token,'unmatched-synthetic-name',first.id)).map(p=>p.user_id),[root.user.user_id]);
+ const replaced=await service.upload(root.token,{version:'1.0.0',build_id:'b'.repeat(64),package:Buffer.from('synthetic VSIX B')});
+ assert.equal(replaced.id,first.id);assert.equal(replaced.state,'pilot');assert.notEqual(replaced.sha256,first.sha256);
+ await assert.rejects(service.publish(root.token,first.id,first.build_id),{code:'version_conflict'});
+ const stable=await service.publish(root.token,replaced.id,replaced.build_id);
+ assert.equal(stable.state,'released');assert.equal((await service.current())?.build_id,replaced.build_id);
+ await assert.rejects(db.query('UPDATE plugin_releases SET artifact=$2,bytes=$3 WHERE id=$1',[stable.id,Buffer.from('changed'),7]),{code:'23514'});
+ await assert.rejects(service.upload(root.token,{version:'1.0.0',build_id:'c'.repeat(64),package:Buffer.from('forbidden replacement')}),{code:'plugin_release_immutable'});
+ await assert.rejects(service.setPilot(root.token,stable.id,{build_id:stable.build_id,user_ids:[root.user.user_id]}),{code:'plugin_release_immutable'});
+ const lower=await service.upload(root.token,{version:'0.9.0',build_id:'d'.repeat(64),package:Buffer.from('older release')});
+ await service.setPilot(root.token,lower.id,{build_id:lower.build_id,user_ids:[root.user.user_id]});
+ await assert.rejects(service.publish(root.token,lower.id,lower.build_id),{code:'plugin_release_not_newer'});
+ assert.equal((await service.current())?.version,'1.0.0');
+});
+
+test('正式分发不依赖采集开关，试用下载只允许有效指定账号且旧构建不能继续下载',async t=>{
+ const db=await testDatabase(t);await db.migrate();const identity=createIdentityService(db,{emailDomains:['example.org']});
+ const issued=await identity.bootstrap({email:'synthetic.downloads@example.org',name:'合成发行管理员'});const initial=await identity.login('synthetic.downloads@example.org',issued.temporaryPassword);
+ const root=await identity.changePassword(initial.token,issued.temporaryPassword,'synthetic-download-password');
+ const department=await createOrganizationService(db,identity).createDepartment(root.token,'合成试用');await createRegistrationService(db,identity).activate(root.token,{department_id:department.id});
+ const {createPluginCredentialService}=await import('../../src/plugin-credentials.js');
+ const access=createPluginCredentialService(db,identity,{encryptionKey:Buffer.alloc(32,7)});const credential=await access.credential(root.token);
+ const service=createPluginReleaseService(db,identity);const first=await service.upload(root.token,{version:'1.0.0',build_id:'a'.repeat(64),package:Buffer.from('public bytes')});
+ await service.setPilot(root.token,first.id,{build_id:first.build_id,user_ids:[root.user.user_id]});
+ await assert.rejects(service.trial('fake'),{code:'plugin_unauthorized'});
+ await assert.rejects(service.download(first.build_id),{code:'plugin_unauthorized'});
+ assert.equal((await service.trial(credential.api_token))?.build_id,first.build_id);
+ assert.equal((await service.download(first.build_id,credential.api_token)).package.toString(),'public bytes');
+ await db.query('UPDATE data_identity SET collection_enabled=false');assert.equal((await service.trial(credential.api_token))?.build_id,first.build_id);
+ await db.query("UPDATE users SET status='suspended' WHERE id=$1",[root.user.user_id]);await assert.rejects(service.download(first.build_id,credential.api_token),{code:'plugin_account_unavailable'});await db.query("UPDATE users SET status='active' WHERE id=$1",[root.user.user_id]);await db.query('UPDATE data_identity SET collection_enabled=true');
+ const next=await service.upload(root.token,{version:'1.0.0',build_id:'b'.repeat(64),package:Buffer.from('replacement bytes')});
+ await assert.rejects(service.download(first.build_id,credential.api_token),{code:'not_found'});
+ await service.publish(root.token,next.id,next.build_id);
+ await db.query('UPDATE data_identity SET collection_enabled=false');
+ assert.equal((await service.current())?.build_id,next.build_id);
+ assert.equal((await service.download(next.build_id)).package.toString(),'replacement bytes');
+ assert.equal(await service.trial(credential.api_token),null);
+});

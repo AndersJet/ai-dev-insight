@@ -1,0 +1,21 @@
+{
+  "name": "@adi/collector",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@adi/tsconfig": "workspace:*",
+    "@adi/contracts": "workspace:*",
+    "@adi/storage": "workspace:*",
+    "@adi/domain": "workspace:*",
+    "ajv": "^8.0.0",
+    "ajv-formats": "^3.0.0"
+  },
+  "exports": "./dist/index.js",
+  "license": "Apache-2.0"
+}

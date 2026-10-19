@@ -1,0 +1,21 @@
+{
+  "name": "@adi/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "tsx watch src/main.ts"
+  },
+  "dependencies": {
+    "@adi/contracts": "workspace:*",
+    "@adi/domain": "workspace:*",
+    "@adi/storage": "workspace:*",
+    "@adi/tsconfig": "workspace:*",
+    "@fastify/multipart": "10.1.2",
+    "fastify": "^5.0.0",
+    "fflate": "0.8.3"
+  },
+  "license": "Apache-2.0"
+}

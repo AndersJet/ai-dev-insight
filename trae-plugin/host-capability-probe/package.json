@@ -1,0 +1,28 @@
+{
+  "name":"adi-host-capability-probe",
+  "publisher":"adi-test",
+  "version":"0.0.1",
+  "displayName":"ADI Host Capability Probe (synthetic only)",
+  "description":"仅测试Trae宿主API，合成数据；不运行Git/Hook、不连接平台。",
+  "engines":{"vscode":"^1.107.0"},
+  "extensionKind":["ui"],
+  "activationEvents":["onCommand:adiHostProbe.open","onView:adiHostProbe.overview"],
+  "main":"./extension.cjs",
+  "contributes":{
+    "commands":[
+      {"command":"adiHostProbe.open","title":"ADI Probe: Open"},
+      {"command":"adiHostProbe.run","title":"ADI Probe: Run"},
+      {"command":"adiHostProbe.write","title":"ADI Probe: SecretStorage Write"},
+      {"command":"adiHostProbe.verify","title":"ADI Probe: SecretStorage Verify"},
+      {"command":"adiHostProbe.clear","title":"ADI Probe: SecretStorage Clear"},
+      {"command":"adiHostProbe.export","title":"ADI Probe: Export Report"},
+      {"command":"adiHostProbe.settings","title":"ADI Probe: Open Probe Settings"}
+    ],
+    "viewsContainers":{"activitybar":[{"id":"adiHostProbe","title":"ADI Probe","icon":"probe.svg"}]},
+    "views":{"adiHostProbe":[{"id":"adiHostProbe.overview","name":"Host Probe · 合成数据","type":"webview"}]},
+    "configuration":{"title":"ADI Host Probe · 测试专用","properties":{
+      "adiHostProbe.platformUrl":{"type":"string","default":"http://example.invalid","scope":"application","description":"合成设置事件测试；此值永远不用于网络请求。"},
+      "adiHostProbe.enabled":{"type":"boolean","default":true,"scope":"application","description":"测试原生设置事件；不控制真实Git或Hook。"}
+    }}
+  }
+}

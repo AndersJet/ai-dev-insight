@@ -1,0 +1,7 @@
+import {openDatabase,createCleanupJournal,createRuntimeReporter} from '@adi/storage';import {createIdentityService,createCleanupService} from '@adi/domain';import {setTimeout as delay} from 'node:timers/promises';
+async function main(){
+ const directory=process.env.ADI_CLEANUP_JOURNAL_DIR;if(!directory){process.stdout.write('{"event":"cleanup_worker_disabled"}\n');return;}const url=process.env.ADI_DATABASE_URL;if(!url)throw new Error('Cleanup worker database required');
+ const db=openDatabase({connectionString:url,schema:process.env.ADI_DATABASE_SCHEMA??'adi',maxConnections:2});const reporter=createRuntimeReporter(db,'cleanup_worker');const identity=createIdentityService(db,{emailDomains:(process.env.ADI_EMAIL_DOMAINS??'').split(',')});const cleanup=createCleanupService(db,identity,{journal:createCleanupJournal(directory)});let stopping=false;for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>{stopping=true;});
+ try{await db.assertNotRecovering();await reporter.flush();process.stdout.write('{"event":"cleanup_worker_ready"}\n');while(!stopping){try{await db.assertNotRecovering();const worked=await cleanup.runOne();reporter.success(Number(worked));await reporter.flush();if(!worked)await delay(300);}catch{reporter.failure();await reporter.flush();process.stderr.write('{"level":"error","code":"cleanup_poll_failed"}\n');await delay(1000);}}}finally{await reporter.flush(true);await db.close();}
+}
+try{await main();}catch{process.stderr.write('{"level":"error","code":"cleanup_worker_start_failed"}\n');process.exitCode=1;}

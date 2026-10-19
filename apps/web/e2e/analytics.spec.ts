@@ -1,0 +1,47 @@
+import {environment as e2eEnv,e2eArtifact} from './helpers/environment.mjs';
+import { test, expect } from './helpers/browser.js';
+import { readFileSync } from 'node:fs';
+test('D organization analysis drills by one sidebar click and keeps date filters without exposing member content', async ({ page, browser }) => {
+  const fixture = JSON.parse(readFileSync(e2eArtifact('e2e-credentials.json'), 'utf8'));
+  await page.goto('/login'); await page.getByLabel('邮箱', { exact: true }).fill(fixture.admin.email); await page.getByLabel('密码', { exact: true }).fill(fixture.admin.password); await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '组织 使用概览', exact: true })).toBeVisible();
+  await expect(page.getByRole('row').filter({ hasText: 'E2E统计A部门' })).toBeVisible();
+  await page.getByRole('complementary').getByRole('link', { name: /E2E统计A部门/ }).click();
+  await expect(page.getByRole('heading', { name: 'E2E统计A部门 · 使用分析', exact: true })).toBeVisible();
+  await expect(page.getByTestId('metric-prompts')).toContainText('2');
+  await expect(page.getByRole('heading', { name: '内容量估算', exact: true })).toHaveCount(0);
+  await expect(page.getByText('如何理解这些数据', { exact: true })).toHaveCount(0);
+  await page.getByRole('radiogroup', { name: '日期范围', exact: true }).getByText('今日', { exact: true }).click();
+  await expect(page.getByRole('radio', { name: '今日', exact: true })).toBeChecked();
+  await expect(page.getByTestId('metric-prompts')).toContainText('1');
+  const from = new URL(page.url()).searchParams.get('from'); expect(from).toBeTruthy();
+  await page.getByRole('complementary').getByRole('link', { name: /E2E统计B部门/ }).click();
+  await expect(page.getByRole('heading', { name: 'E2E统计B部门 · 使用分析', exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('from')).toBe(from);
+  await expect(page.getByRole('radio', { name: '今日', exact: true })).toBeChecked();
+  await expect(page.getByRole('row').filter({ hasText: '统计同事' })).toBeVisible();
+  await page.getByRole('button', { name: '自选范围', exact: true }).click();
+  const day = 86_400_000; const offset = 8 * 3600_000;
+  const startDate = new Date(Date.parse(from!) - day + offset).toISOString().slice(0, 10);
+  const endDate = new Date(Date.parse(from!) + offset).toISOString().slice(0, 10);
+  await page.getByRole('dialog').getByLabel('开始日期', { exact: true }).fill(startDate);
+  await page.getByRole('dialog').getByLabel('结束日期', { exact: true }).fill(endDate);
+  await page.getByRole('button', { name: '应用范围', exact: true }).click();
+  await expect(page.getByTestId('analysis-period-description')).toContainText(`${startDate} 至 ${endDate}`);
+  await expect(page.getByRole('dialog', { name: '自选日期范围', exact: true })).toBeHidden();
+  await expect(page.getByTestId('content-estimate-tokens')).toHaveCount(0);
+  await page.screenshot({ path: '.run/analytics-department.png', fullPage: true });
+  const secondContext = await browser.newContext(); const manager = await secondContext.newPage();
+  try {
+    await manager.goto(e2eEnv.webURL+'/login'); await manager.getByLabel('邮箱', { exact: true }).fill(fixture.analytics.managerEmail); await manager.getByLabel('密码', { exact: true }).fill(fixture.analytics.managerPassword); await manager.getByRole('button', { name: '登录', exact: true }).click();
+    await expect(manager.getByRole('heading', { name: 'E2E统计A部门 · 使用分析', exact: true })).toBeVisible();
+    await expect(manager.getByRole('complementary').getByRole('link', { name: /E2E统计B部门/ })).toHaveCount(0);
+    const forbidden = await manager.request.get(`/api/v1/analytics/overview?department_id=${fixture.analytics.departmentB}`); expect(forbidden.status()).toBe(403);
+    const safe = await manager.request.get(`/api/v1/analytics/members?department_id=${fixture.analytics.departmentA}`); expect(safe.status()).toBe(200); expect(await safe.text()).not.toContain('PRIVATE_BROWSER');
+    await expect(manager.getByRole('link', { name: '查看会话', exact: true })).toHaveCount(0);
+    await manager.getByRole('button', { name: '查看统计', exact: true }).click();
+    await expect(manager.getByRole('heading', { name: '统计经理 · 使用统计', exact: true })).toBeVisible();
+    await expect(manager.getByRole('main')).not.toContainText('PRIVATE_BROWSER');
+    await expect(manager.getByRole('dialog')).toHaveCount(0);
+  } finally { await secondContext.close(); }
+});

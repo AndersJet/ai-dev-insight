@@ -1,0 +1,15 @@
+{
+  "extends": "./packages/tsconfig/node.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "apps/api/test/**/*.ts",
+    "apps/collector/test/**/*.ts",
+    "apps/hook-client/test/**/*.ts",
+    "packages/storage/test/**/*.ts",
+    "packages/domain/test/**/*.ts",
+    "apps/web/test/**/*.ts",
+    "apps/web/e2e/**/*.ts"
+  ]
+}

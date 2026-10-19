@@ -1,0 +1,45 @@
+import {test,expect} from './helpers/browser.js';
+import {randomBytes,randomUUID} from 'node:crypto';
+
+test('superadmin sees permanent plugin project evidence through the unified tracking source tabs and keyword query',async({page})=>{
+  await page.goto('/login');await page.getByLabel('邮箱',{exact:true}).fill('e2e-root@example.invalid');await page.getByLabel('密码',{exact:true}).fill('e2e-admin-test-password');await page.getByRole('button',{name:'登录',exact:true}).click();
+  await expect(page.getByRole('button',{name:'退出登录',exact:true})).toBeVisible();
+  const me=(await(await page.request.get('/api/v1/me')).json()).data;
+  if(!me.registered){const {registeredFixture}=await import('./helpers/registered-fixture.js');await registeredFixture(me.user_id);}
+  const csrf=(await page.context().cookies()).find(cookie=>cookie.name==='adi_csrf')!.value;
+  const department=await page.request.post('/api/v1/departments',{headers:{'x-csrf-token':csrf},data:{name:`插件观测E2E-${randomUUID()}`}});expect(department.status()).toBe(201);
+  const email=`plugin-${randomUUID()}@example.org`,password='synthetic-plugin-e2e-password';
+  expect((await page.request.post('/api/v1/registration/complete',{data:{email,password,display_name:'插件合成员工',department_id:(await department.json()).data.id}})).status()).toBe(201);
+  expect((await page.request.post('/api/v1/auth/login',{data:{email,password}})).status()).toBe(200);
+  const ownerCsrf=(await page.context().cookies()).find(cookie=>cookie.name==='adi_csrf')!.value;
+  const credential=await page.request.post('/api/v1/me/plugin-credential',{headers:{'x-csrf-token':ownerCsrf},data:{}});expect(credential.status()).toBe(200);
+  const token=(await credential.json()).data.api_token,config=randomUUID(),secret=randomBytes(32).toString('base64url'),workspace=`/synthetic/plugin-browser-${randomUUID()}`;
+  const registered=await page.request.post('/api/v1/plugin/sources',{headers:{authorization:`Bearer ${token}`},data:{source_secret:secret,source_config_id:config,platform:'macos',plugin_version:'0.3.0'}});expect(registered.status()).toBe(200);
+  const issued=(await registered.json()).data;
+  const event={schema_version:2,collector_id:issued.collector_id,nt_email:issued.email,source_config_id:config,observation_id:randomUUID(),sequence:'1',platform:'macos',workspace_path:workspace,observed_at:'2024-01-01T00:00:00.000Z',state:'repository',reason:null,git_root:workspace,remotes:[{name:'origin',direction:'fetch',address:'https://fake:synthetic-secret@git.example.invalid/plugin/browser.git?key=synthetic-secret'}],plugin_version:'0.3.0'};
+  expect((await page.request.post('/api/v1/plugin/observations',{headers:{authorization:`Bearer ${token}`,'x-adi-source-secret':secret},data:event})).status()).toBe(201);
+  expect((await page.request.post('/api/v1/auth/login',{data:{email:'e2e-root@example.invalid',password:'e2e-admin-test-password'}})).status()).toBe(200);
+  await page.goto(`/plugin-code-flow?search=${encodeURIComponent(workspace)}`);
+  await expect(page.getByRole('heading',{name:'代码流向追踪',exact:true})).toBeVisible();
+  await expect(page).toHaveURL(/\/code-flow\?.*source=plugin/);
+  await expect(page.getByRole('tab',{name:'插件采集',exact:true})).toHaveAttribute('aria-selected','true');
+  const row=page.getByRole('row').filter({hasText:workspace});await expect(row).toContainText(email);await expect(row).toContainText('https://git.example.invalid/plugin/browser.git');
+  await expect(page.getByRole('main')).not.toContainText('synthetic-secret');
+  await row.getByRole('button',{name:'观测历史',exact:true}).click();
+  const history=page.getByRole('dialog',{name:'插件观测历史',exact:true});await expect(history).toContainText('2024');await expect(history).toContainText('https://git.example.invalid/plugin/browser.git');
+  await history.getByRole('button',{name:'关闭',exact:true}).click();
+  const search=page.getByRole('textbox',{name:'搜索项目、用户或仓库',exact:true});
+  await expect(page.getByLabel('最近观测开始时间（北京时间）',{exact:true})).toHaveCount(0);
+  await search.fill(`${workspace}/absent`);
+  await page.getByRole('button',{name:'查询',exact:true}).click();
+  await expect(page.getByRole('main')).toContainText('暂无插件观测记录');
+  await search.fill(workspace);
+  await page.getByRole('button',{name:'查询',exact:true}).click();
+  await expect(row).toContainText(email);
+  await page.reload();await expect(row).toContainText(email);
+  await expect(search).toHaveValue(workspace);
+  await page.getByRole('tab',{name:'Hook采集',exact:true}).click();
+  await expect(row).toHaveCount(0);await expect(search).toHaveValue(workspace);
+  await page.getByRole('tab',{name:'插件采集',exact:true}).click();
+  await expect(row).toContainText(email);await expect(row.getByRole('button',{name:'删除',exact:true})).toHaveCount(0);
+});

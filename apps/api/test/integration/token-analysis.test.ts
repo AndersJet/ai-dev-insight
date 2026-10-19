@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID,createHash} from 'node:crypto';
+import {unzipSync,strFromU8} from 'fflate';
+import {testDatabase} from '../../../../packages/storage/test/helpers.js';
+import {createIdentityService,createSessionReadService,createOrganizationService,createRegistrationService} from '@adi/domain';
+import {createApi} from '../../src/app.js';
+
+test('analysis package preserves retained cross-day facts and enforces Web and permanent plugin owner boundaries',async t=>{
+  const db=await testDatabase(t);await db.migrate();const now=new Date(),yesterday=new Date(now.getTime()-2*86400000);
+  await db.ensurePartitions(new Date(now.getTime()-4*86400000),new Date(now.getTime()+2*86400000));
+  const identity=createIdentityService(db,{emailDomains:['example.org']});
+  const seed=await identity.bootstrap({email:'analysis-admin@example.org',name:'合成管理员'});
+  const first=await identity.login('analysis-admin@example.org',seed.temporaryPassword);
+  const login=await identity.changePassword(first.token,seed.temporaryPassword,'analysis-admin-password');
+  const org=createOrganizationService(db,identity),registration=createRegistrationService(db,identity),dept=await org.createDepartment(login.token,'分析测试');
+  await registration.activate(login.token,{department_id:dept.id});
+  const other=await registration.register({email:'analysis-other@example.org',password:'analysis-other-password',display_name:'其他成员',department_id:dept.id});
+  const otherLogin=await identity.login('analysis-other@example.org','analysis-other-password');
+  const ownInstall=randomUUID(),otherInstall=randomUUID();
+  for(const [id,user] of [[ownInstall,login.user.user_id],[otherInstall,other.user_id]])await db.query('INSERT INTO installations(id,user_id,token_hash,label) VALUES($1,$2,$3,$4)',[id,user,createHash('sha256').update(id!).digest('hex'),'合成']);
+  async function ingest(installation:string,source:string,at:Date,prompt:string){
+    const result=await db.ingest({schema_version:2,installation_id:installation,client_event_id:randomUUID(),source_session_id:source,event_type:'UserPromptSubmit',occurred_at:at.toISOString(),payload:{prompt}},{admissionEpoch:1,receivedAt:now});
+    if(result.outcome!=='committed')throw new Error('Fixture failed');return result;
+  }
+  const a=await ingest(ownInstall,'cross-day',yesterday,'前日需求'),b=await ingest(ownInstall,'follow-up',now,'今日续接'),c=await ingest(otherInstall,'other-owner',now,'OTHER_PRIVATE_CONTENT');
+  for(let i=0;i<55;i++)await ingest(ownInstall,'cross-day',new Date(yesterday.getTime()+i+1),'第'+i+'次提示');
+  const precise=await db.ingestJson(JSON.stringify({schema_version:2,installation_id:ownInstall,client_event_id:randomUUID(),source_session_id:'cross-day',event_type:'PostToolUse',occurred_at:now.toISOString(),payload:{tool_name:'test',tool_response:'full-'+ '文'.repeat(20000)}}).replace('"test"','"test","large_integer":9007199254740993'),{admissionEpoch:1,receivedAt:now});
+  assert.equal(precise.outcome,'committed');
+  const app=createApi(undefined,{identity,sessions:createSessionReadService(db,identity),plugin:{db,signingKey:Buffer.alloc(32,7)}});t.after(()=>app.close());
+  const web={cookie:`adi_session=${login.token}`,'x-csrf-token':login.csrfToken};
+  const otherWeb={cookie:`adi_session=${otherLogin.token}`,'x-csrf-token':otherLogin.csrfToken};
+  const issued=await app.inject({method:'POST',url:'/api/v1/me/plugin-credential',headers:web,payload:{}});assert.equal(issued.statusCode,200,issued.body);
+  const plugin={authorization:`Bearer ${issued.json().data.api_token}`};
+  const download=async(ids:string[],headers:Record<string,string>=web,url='/api/v1/sessions/analysis-package')=>app.inject({method:'POST',url,headers,payload:{session_ids:ids}});
+  assert.equal((await download([a.sessionId],{})).statusCode,401);
+  assert.equal((await download([a.sessionId],{cookie:web.cookie})).statusCode,403);
+  assert.equal((await download([a.sessionId],otherWeb)).statusCode,404);
+  assert.equal((await download([c.sessionId],otherWeb)).statusCode,200,'ordinary user may export own history');
+  assert.equal((await download([a.sessionId,c.sessionId])).statusCode,400,'super must not mix people');
+  assert.equal((await download([c.sessionId])).statusCode,200,'Web super can analyze other individual');
+  const blocked=await download([c.sessionId],plugin,'/api/v1/plugin/analysis/package');assert.equal(blocked.statusCode,404);assert.ok(!blocked.body.includes('OTHER_PRIVATE_CONTENT'));
+  assert.equal((await app.inject({method:'POST',url:'/api/v1/plugin/analysis/sessions',headers:plugin,payload:{user_id:other.user_id}})).statusCode,400);
+  const page=await app.inject({method:'POST',url:'/api/v1/plugin/analysis/sessions',headers:plugin,payload:{limit:1}});assert.equal(page.statusCode,200,page.body);assert.equal(page.json().data.items.length,1);assert.ok(page.json().data.next_cursor);
+  const page2=await app.inject({method:'POST',url:'/api/v1/plugin/analysis/sessions',headers:plugin,payload:{limit:1,cursor:page.json().data.next_cursor}});assert.equal(page2.statusCode,200,page2.body);assert.notEqual(page2.json().data.items[0].id,page.json().data.items[0].id);
+  const archive=await download([a.sessionId,b.sessionId]);assert.equal(archive.statusCode,200,archive.body);assert.equal(archive.headers['cache-control'],'no-store');
+  assert.equal(createHash('sha256').update(archive.rawPayload).digest('hex'),archive.headers['x-content-sha256']);
+  const files=unzipSync(archive.rawPayload),manifest=JSON.parse(strFromU8(files['manifest.json']!));assert.deepEqual(manifest.session_ids,[a.sessionId,b.sessionId]);
+  const template=strFromU8(files['report-template.html']!),templateData=JSON.parse(template.match(/<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/)![1]!);assert.equal(templateData.version,'token-report-v2');assert.equal(templateData.mode,'template');assert.ok(!template.includes('prototype-bar'));assert.match(strFromU8(files['prompt.md']!),/只替换 id="report-data"/);
+  const data=JSON.parse(strFromU8(files[`sessions/${a.sessionId}.json`]!));assert.equal(data.exported_events,57,'must exceed both page and body chunk sizes');
+  const tool=data.events.find((e:{kind:string})=>e.kind==='PostToolUse');assert.ok(tool.payload_json.includes('9007199254740993'));assert.ok(tool.payload_json.includes('文'.repeat(20000)));
+  assert.equal(JSON.parse(strFromU8(files['official-usage.json']!)).sessions[0].session_coverage.state,'unknown');
+  for(const f of manifest.files){assert.equal(files[f.path]!.length,f.bytes);assert.equal(createHash('sha256').update(files[f.path]!).digest('hex'),f.sha256);}
+  const text=Object.values(files).map(value=>strFromU8(value)).join('');assert.ok(!text.includes(issued.json().data.api_token));assert.ok(!text.includes('OTHER_PRIVATE_CONTENT'));assert.ok(text.includes('分析结果.html'));
+  const personal=await download([a.sessionId,b.sessionId],plugin,'/api/v1/plugin/analysis/package');assert.equal(personal.statusCode,200,personal.body);
+  const source=await createSessionReadService(db,identity).analysisData(login.token,[a.sessionId]);await db.query('UPDATE users SET cleanup_generation=cleanup_generation+1 WHERE id=$1',[login.user.user_id]);
+  await assert.rejects(source.assertCurrent(),{code:'content_changed'});
+  const otherSource=await createSessionReadService(db,identity).analysisData(login.token,[c.sessionId]);
+  await db.query("DELETE FROM role_grants WHERE user_id=$1 AND role='super'",[login.user.user_id]);
+  await assert.rejects(otherSource.assertCurrent(),{code:'not_found'},'revoked super cannot publish an already built foreign archive');
+  await db.query("UPDATE users SET status='suspended' WHERE id=$1",[login.user.user_id]);
+  assert.equal((await download([a.sessionId],plugin,'/api/v1/plugin/analysis/package')).statusCode,403);
+});

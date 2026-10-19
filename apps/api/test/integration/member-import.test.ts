@@ -1,0 +1,23 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { testDatabase } from '../../../../packages/storage/test/helpers.js';
+import { createIdentityService } from '../../../../packages/domain/src/identity.js';
+import { createOrganizationService } from '../../../../packages/domain/src/organization.js';
+import { createMemberImportService } from '../../../../packages/domain/src/member-import.js';
+import { createApi } from '../../src/app.js';
+test('template download and real multipart CSV import use a persistent, queryable job', async t => {
+  const db = await testDatabase(t); await db.migrate(); const identity = createIdentityService(db, { emailDomains: ['example.invalid'] });
+  const seed = await identity.bootstrap({ email: 'upload-root@example.invalid', name: '上传超管' }); const temporary = await identity.login('upload-root@example.invalid', seed.temporaryPassword); const root = await identity.changePassword(temporary.token, seed.temporaryPassword, 'upload-root-password');
+  const organization = createOrganizationService(db, identity); const dept = await organization.createDepartment(root.token, '上传部门'); const imports = createMemberImportService(db, identity);
+  const app = createApi(undefined, { identity, organization, imports }); t.after(() => app.close());
+  const headers = { cookie: `adi_session=${root.token}`, 'x-csrf-token': root.csrfToken };
+  const template = await app.inject({ url: `/api/v1/member-imports/template?department_id=${dept.id}`, headers }); assert.equal(template.statusCode, 200); assert.equal(template.rawPayload.subarray(0, 2).toString(), 'PK');
+  const boundary = 'adi-test-boundary';
+  const payload = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="members.csv"\r\nContent-Type: text/csv\r\n\r\n工作邮箱,姓名\nhttp-import@example.invalid,上传成员\n\r\n--${boundary}--\r\n`);
+  const preview = await app.inject({ method: 'POST', url: `/api/v1/member-imports/preview?department_id=${dept.id}`, headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload });
+  assert.equal(preview.statusCode, 200); assert.equal(preview.json().data.counts.create, 1);
+  const submitted = await app.inject({ method: 'POST', url: `/api/v1/member-imports/${preview.json().data.id}/commit`, headers: { ...headers, 'idempotency-key': 'http-import-attempt' }, payload: { preview_hash: preview.json().data.preview_hash } }); assert.equal(submitted.statusCode, 202);
+  await imports.runOne(); const job = await app.inject({ url: `/api/v1/jobs/${submitted.json().data.job_id}`, headers }); assert.equal(job.statusCode, 200); assert.equal(job.json().data.status, 'succeeded');
+  const completed = await app.inject({ url: `/api/v1/member-imports/${preview.json().data.id}`, headers }); assert.equal(completed.statusCode, 200); assert.equal(completed.json().data.status, 'succeeded');
+  assert.equal((await organization.listMembers(root.token, dept.id)).items[0]?.email, 'http-import@example.invalid');
+});

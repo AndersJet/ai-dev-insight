@@ -1,0 +1,43 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { testDatabase } from '../../../storage/test/helpers.js';
+import { createIdentityService } from '../../src/identity.js';
+import { createOrganizationService } from '../../src/organization.js';
+import { createAdministrationService } from '../../src/administration.js';
+
+test('global role and status changes revoke sessions, preserve identity and protect the last usable superadmin', async t => {
+  const db = await testDatabase(t); await db.migrate(); const identity = createIdentityService(db, { emailDomains: ['example.invalid'] });
+  const seed = await identity.bootstrap({ email: 'admin-root@example.invalid', name: '超管' });
+  const temporaryRoot = await identity.login('admin-root@example.invalid', seed.temporaryPassword); const root = await identity.changePassword(temporaryRoot.token, seed.temporaryPassword, 'administration-root-password');
+  const org = createOrganizationService(db, identity); const admin = createAdministrationService(db, identity);
+  const dept = await org.createDepartment(root.token, '管理部门'); const member = await org.addMember(root.token, dept.id, { email: 'admin-member@example.invalid', display_name: '管理成员' });
+  const issued = await identity.resetPassword(root.token, member.user_id, 1); const temporary = await identity.login(member.email, issued.temporaryPassword); const employee = await identity.changePassword(temporary.token, issued.temporaryPassword, 'administration-member-password');
+  await assert.rejects(admin.setStatus(employee.token, seed.userId, { status: 'suspended', version: 2, reason: 'test' }), { code: 'forbidden' });
+  await admin.setAccess(root.token, member.user_id, { global_roles: ['anc_admin'], department_ids: [], version: 3 });
+  assert.equal(await identity.resolve(employee.token), null);
+  const anc = await identity.login(member.email, 'administration-member-password'); assert.ok(anc.user.roles.includes('anc_admin'));
+  await assert.rejects(admin.setStatus(anc.token, seed.userId, { status: 'suspended', version: 2, reason: 'test' }), { code: 'forbidden' });
+  await admin.setStatus(root.token, member.user_id, { status: 'suspended', version: 4, reason: 'temporary' });
+  assert.equal(await identity.resolve(anc.token), null); await assert.rejects(identity.login(member.email, 'administration-member-password'), { code: 'invalid_credentials' });
+  await admin.setStatus(root.token, member.user_id, { status: 'active', version: 5, reason: 'resume' });
+  assert.ok((await identity.login(member.email, 'administration-member-password')).user.roles.includes('anc_admin'));
+  await admin.setStatus(root.token, member.user_id, { status: 'deleted', version: 6, reason: 'remove-account' });
+  await assert.rejects(org.addMember(root.token, dept.id, { email: member.email, display_name: '重复账号' }), { code: 'account_deleted' });
+  await admin.setStatus(root.token, member.user_id, { status: 'active', version: 7, reason: 'restore-same-person' });
+  const restored = await identity.login(member.email, 'administration-member-password'); assert.equal(restored.user.user_id, member.user_id); assert.deepEqual(restored.user.roles, ['employee']);
+  await assert.rejects(admin.setStatus(root.token, seed.userId, { status: 'suspended', version: 2, reason: 'self-disable' }), { code: 'last_super_admin' });
+  await assert.rejects(admin.setAccess(root.token, seed.userId, { global_roles: [], department_ids: [], version: 2 }), { code: 'last_super_admin' });
+  assert.ok((await identity.resolve(root.token))?.user.roles.includes('super'));
+});
+test('email correction keeps the internal identity and reserves deleted emails against new identities', async t => {
+  const db = await testDatabase(t); await db.migrate(); const identity = createIdentityService(db, { emailDomains: ['example.invalid'] });
+  const seed = await identity.bootstrap({ email: 'email-root@example.invalid', name: '邮箱超管' }); const temp = await identity.login('email-root@example.invalid', seed.temporaryPassword); const root = await identity.changePassword(temp.token, seed.temporaryPassword, 'email-root-password');
+  const org = createOrganizationService(db, identity); const admin = createAdministrationService(db, identity); const dept = await org.createDepartment(root.token, '邮箱部门');
+  const person = await org.addMember(root.token, dept.id, { email: 'typo@example.invalid', display_name: '同一个人' });
+  await admin.correctEmail(root.token, person.user_id, { version: 1, email: 'Correct@Example.Invalid', verification_note: '已由本人确认录入错误' });
+  const corrected = await admin.getAccount(root.token, person.user_id); assert.equal(corrected.id, person.user_id); assert.equal(corrected.email, 'correct@example.invalid');
+  await admin.setStatus(root.token, person.user_id, { version: 2, status: 'deleted', reason: 'logical-delete' });
+  await assert.rejects(org.addMember(root.token, dept.id, { email: 'correct@example.invalid', display_name: '另一身份' }), { code: 'account_deleted' });
+  const audit = await db.query<{ metadata: { before: string; after: string } }>("SELECT metadata FROM audit_events WHERE action='email_corrected'");
+  assert.equal(audit.rows[0]?.metadata.before, 'typo@example.invalid'); assert.equal(audit.rows[0]?.metadata.after, 'correct@example.invalid');
+});

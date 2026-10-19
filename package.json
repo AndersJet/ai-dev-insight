@@ -1,0 +1,64 @@
+{
+  "name": "ai-dev-insight",
+  "version": "1.5.3",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=10 <11"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build && node scripts/package-hook-client.mjs",
+    "typecheck": "pnpm -r --filter './packages/*' --if-present build && pnpm typecheck:prepared",
+    "lint": "eslint apps packages scripts trae-plugin playwright.config.mjs",
+    "contracts:generate": "pnpm --filter @adi/contracts build && node scripts/generate-contracts.mjs",
+    "contracts:check": "pnpm --filter @adi/contracts build && pnpm contracts:check:prepared",
+    "test:unit": "pnpm --filter @adi/contracts --filter @adi/hook-client build && pnpm test:unit:prepared",
+    "test": "pnpm test:unit",
+    "test:ui": "pnpm --filter @adi/contracts build && playwright test --config playwright.ui.config.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm contracts:check && pnpm build && pnpm test",
+    "dev": "node scripts/dev.mjs",
+    "test:integration": "pnpm --filter @adi/api... --filter @adi/collector... --filter @adi/worker... build && pnpm client:package && node -e \"require('node:fs').mkdirSync('.run',{recursive:true})\" && node --import tsx --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=.run/integration-junit.xml --test-concurrency=1 packages/storage/test/*.test.ts packages/domain/test/integration/*.test.ts apps/api/test/integration/*.test.ts apps/collector/test/integration/*.test.ts",
+    "db:migrate": "pnpm --filter @adi/api... build && node apps/api/dist/cli.js migrate",
+    "test:e2e": "pnpm --filter adi-project-tracker --filter @adi/api... --filter @adi/worker... --filter @adi/collector... --filter @adi/hook-client build && node scripts/package-hook-client.mjs && node scripts/e2e-setup.mjs && playwright test",
+    "db:partitions": "pnpm --filter @adi/api... build && node apps/api/dist/cli.js partitions",
+    "client:package": "pnpm --filter @adi/hook-client build && node scripts/package-hook-client.mjs",
+    "db:rebuild-session": "pnpm --filter @adi/api... build && node apps/api/dist/cli.js rebuild-session",
+    "analytics:plan": "pnpm --filter @adi/domain... build && node --import tsx scripts/analytics-plan.mjs",
+    "db:queue-usage": "pnpm --filter @adi/api... build && node apps/api/dist/cli.js queue-usage",
+    "db:queue-attribution": "pnpm --filter @adi/api... build && node apps/api/dist/cli.js queue-attribution",
+    "db:recover": "pnpm --filter @adi/api... build && node apps/api/dist/recovery-cli.js",
+    "db:recovery-access": "pnpm --filter @adi/api... build && node apps/api/dist/recovery-access-cli.js",
+    "db:queue-usage-backfill": "pnpm --filter @adi/api... build && node apps/api/dist/cli.js queue-usage-backfill",
+    "capacity:detail": "pnpm build && node scripts/e2e-setup.mjs && playwright test --config scripts/capacity/playwright.config.mjs",
+    "capacity:collector": "pnpm --filter @adi/collector... --filter @adi/api... build && node --import tsx scripts/collector-capacity.mjs",
+    "db:backup": "pnpm --filter @adi/api... build && node apps/api/dist/backup-cli.js",
+    "db:init": "node scripts/dev.mjs --init-only",
+    "typecheck:prepared": "pnpm -r --if-present typecheck && tsc --noEmit -p tsconfig.tests.json",
+    "contracts:check:prepared": "node scripts/generate-contracts.mjs --check",
+    "test:unit:prepared": "node scripts/ci-check.mjs --unit",
+    "ci:check": "node scripts/ci-check.mjs",
+    "notices:generate": "node scripts/generate-third-party-notices.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.0.0",
+    "eslint-plugin-vue": "^10.0.0",
+    "fflate": "0.8.3",
+    "tsx": "^4.0.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.0.0",
+    "vue-eslint-parser": "^10.0.0"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AndersJet/ai-dev-insight.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AndersJet/ai-dev-insight/issues"
+  },
+  "homepage": "https://github.com/AndersJet/ai-dev-insight#readme"
+}

@@ -1,0 +1,58 @@
+# Synthetic session-list acceptance only. Disk-backed PG; durable writes remain enabled.
+name: adi-session-capacity
+services:
+  postgres-capacity:
+    image: postgres:18.6@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
+    command: ["postgres", "-c", "max_connections=40", "-c", "shared_buffers=512MB", "-c", "work_mem=4MB", "-c", "max_wal_size=256MB"]
+    environment:
+      POSTGRES_USER: adi_capacity
+      POSTGRES_PASSWORD: adi_capacity_synthetic_only
+      POSTGRES_DB: adi_capacity
+    ports: ["127.0.0.1:55439:5432"]
+    cpus: 1
+    mem_limit: 2g
+    volumes:
+      - "session-capacity-data:/var/lib/postgresql"
+      - "../../packages/storage/test/extensions.sql:/docker-entrypoint-initdb.d/001-extensions.sql:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adi_capacity -d adi_capacity"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  api:
+    image: &node-image node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c
+    working_dir: /workspace
+    command: ["node", "--max-old-space-size=512", "scripts/session-list-capacity-service.mjs", "api"]
+    cpus: 0.5
+    mem_limit: 768m
+    volumes: &workspace ["../../:/workspace:ro"]
+    environment: &env
+      ADI_SESSION_CAPACITY_CONTAINER: "true"
+      ADI_SESSION_CAPACITY_CONFIG: /workspace/.run/session-list-capacity/config.json
+    ports: ["127.0.0.1:4188:4188"]
+    depends_on:
+      postgres-capacity: {condition: service_healthy}
+  worker:
+    image: *node-image
+    working_dir: /workspace
+    command: ["node", "--max-old-space-size=256", "scripts/session-list-capacity-worker.mjs"]
+    cpus: 0.6
+    mem_limit: 1536m
+    volumes: *workspace
+    environment: *env
+    ports: ["127.0.0.1:4192:4192"]
+    depends_on:
+      postgres-capacity: {condition: service_healthy}
+  collector:
+    image: *node-image
+    working_dir: /workspace
+    command: ["node", "--max-old-space-size=512", "scripts/session-list-capacity-service.mjs", "collector"]
+    cpus: 1.25
+    mem_limit: 1g
+    volumes: *workspace
+    environment: *env
+    ports: ["127.0.0.1:4189:4189", "127.0.0.1:4191:4191"]
+    depends_on:
+      postgres-capacity: {condition: service_healthy}
+volumes:
+  session-capacity-data:

@@ -1,0 +1,14 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'trae-plugin'
+
+onlyBuiltDependencies:
+  - esbuild
+
+# Pin reviewed fixes until the direct dependencies adopt them.
+overrides:
+  source-map-js: 1.2.2
+  'exceljs>uuid': 11.1.1
+  # Retain ExcelJS's streaming API without the obsolete binary/buffers chain.
+  'exceljs>unzipper': 0.12.3

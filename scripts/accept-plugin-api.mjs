@@ -1,0 +1,22 @@
+// Run with node --import tsx so acceptance always uses the current source.
+import {openDatabase} from '../packages/storage/src/index.ts';
+import {createApi} from '../apps/api/src/app.ts';
+import {createIdentityService} from '../packages/domain/src/index.ts';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {mkdir,writeFile} from 'node:fs/promises';
+const url='postgres://adi_test:adi_test_local_only@127.0.0.1:55438/adi_test';
+const port=Number(process.env.ADI_PLUGIN_ACCEPT_PORT??4194);
+if(![4194,4195].includes(port))throw new Error('Only owned acceptance ports are permitted');
+const base=`http://127.0.0.1:${port}`;
+const schema='test_plugin_accept_'+randomUUID().replaceAll('-','');
+const db=openDatabase({connectionString:url,schema});await db.migrate();
+const identity=createIdentityService(db,{emailDomains:['example.invalid']});
+const seed=await identity.bootstrap({email:'plugin-accept@example.invalid',name:'插件隔离验收'});
+const initial=await identity.login('plugin-accept@example.invalid',seed.temporaryPassword);
+await identity.changePassword(initial.token,seed.temporaryPassword,'plugin-accept-synthetic-password');
+const api=createApi(undefined,{identity,plugin:{db,signingKey:randomBytes(32)},secureCookies:false});
+await api.listen({host:'127.0.0.1',port});
+await mkdir('.run/plugin-acceptance',{recursive:true,mode:0o700});
+await writeFile(`.run/plugin-acceptance/api-${port}.json`,JSON.stringify({url:base,schema,pid:process.pid}),{mode:0o600});
+process.stdout.write(JSON.stringify({event:'plugin_acceptance_api_ready',url:base,schema})+'\n');
+for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>{void (async()=>{await api.close();await db.query(`DROP SCHEMA "${schema}" CASCADE`);await db.close();})();});

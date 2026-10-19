@@ -1,0 +1,9 @@
+# 私有配置与本机发行产物
+.env
+.env.*
+!.env.example
+offline/
+backups/
+*.tar
+*.tar.gz
+.export-*/

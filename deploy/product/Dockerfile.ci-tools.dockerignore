@@ -1,0 +1,10 @@
+# Default-deny: no project code, dependency cache, credentials or build outputs.
+**
+!deploy/
+deploy/**
+!deploy/product/
+deploy/product/**
+!deploy/product/prepare-ci-apt.sh
+!deploy/product/install-ci-test-tools.sh
+!deploy/product/install-ci-postgres-client.sh
+!deploy/product/check-ci-tools.sh

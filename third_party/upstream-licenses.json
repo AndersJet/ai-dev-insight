@@ -1,0 +1,25 @@
+{
+  "@vue/devtools-api@6.6.4": {
+    "file": "vue-devtools-api-6.6.4.txt",
+    "source": "https://raw.githubusercontent.com/vuejs/devtools-v6/v6.6.4/LICENSE"
+  },
+  "saxes@5.0.1": {
+    "file": "saxes-5.0.1.txt",
+    "source": "https://raw.githubusercontent.com/lddubeau/saxes/v5.0.1/LICENSE"
+  },
+  "boolbase@1.0.0": {
+    "file": "boolbase-1.0.0.txt",
+    "source": "https://raw.githubusercontent.com/fb55/boolbase/be0bcd8a4e917a0a5895e95b523fbbed05a64871/LICENSE",
+    "note": "The upstream license commit still identifies version 1.0.0; its index.js matches the published package."
+  },
+  "natural-compare@1.4.0": {
+    "file": "natural-compare-1.4.0.txt",
+    "source": "https://lauri.rooden.ee/mit-license.txt",
+    "note": "The published README links this author license and supplies its copyright notice; both are preserved."
+  },
+  "lodash-unified@1.0.3": {
+    "file": "mit-standard-permission.txt",
+    "source": "https://registry.npmjs.org/lodash-unified/1.0.3",
+    "note": "The published package declares MIT and author Jack Works, with no separate license file. Standard MIT terms supplement that declaration; this is not a license borrowed from lodash."
+  }
+}

@@ -1,0 +1,36 @@
+import {verificationWorkspace} from '../src/installation-verification.js';
+import {decodePluginRelease} from '@adi/contracts';
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+import {runInNewContext} from 'node:vm';
+import {transform} from 'esbuild';
+import {PluginHttpError,pluginFailureHint} from '../src/http-client.js';
+
+test('Windows 平台验证失败后，重试 Hook 会重新验证连接并恢复安装',async t=>{
+ const binding={origin:'http://example.invalid',user_id:'a163f758-49a9-4d19-b713-0680c1810f66',email:'synthetic@example.invalid',api_token:'adi_api_v2.'+'a'.repeat(43)};
+ let connected=false,installs=0,meRequests=0,pulseCalls=0;
+ let pulseGate:Promise<void>|undefined,pulseStarted:(()=>void)|undefined;
+ const posted:{type:string;state:{error:string;hook:string;git:string}}[]=[];
+ let provider:{resolveWebviewView(view:unknown):void}|undefined,handler:((message:unknown)=>Promise<void>)|undefined;
+ const disposable=()=>({dispose(){}});
+ const sdk={StatusBarAlignment:{Right:2},env:{},window:{createStatusBarItem:()=>({show(){},dispose(){}}),registerWebviewViewProvider:(_id:string,value:typeof provider)=>{provider=value;return disposable();}},workspace:{isTrusted:true,workspaceFolders:[],getConfiguration:()=>({inspect:(key:string)=>({globalValue:key==='webUrl'?binding.origin:undefined}),get:()=>false}),onDidChangeConfiguration:disposable,onDidChangeWorkspaceFolders:disposable,onDidGrantWorkspaceTrust:disposable},commands:{registerCommand:disposable,executeCommand:async()=>{}}};
+ const actualRequire=createRequire(new URL('../src/extension.ts',import.meta.url));
+ const replacements:Record<string,unknown>={vscode:sdk,'@adi/contracts':{decodePluginRelease},'./installation-verification.js':{verificationWorkspace,WorkspaceInstallationVerification:class{workspace={id:'synthetic'};setCheck(){}resetHookVerification(){}snapshot(){return null;}async setScope(){}event(){}async restore(){}async dispose(){}}},'./verification-environment.js':{verificationEnvironment:async()=>({})},'./diagnostics.js':{diagnosticOperation:()=>()=>{}},'./http-client.js':{PluginHttpError,pluginFailureHint},'./runtime-control.js':{runtimeOwner:()=> 'a'.repeat(64),RuntimeControl:class{async pulse(){pulseCalls++;pulseStarted?.();await pulseGate;return true;}async stop(){}async close(){}}},'./collector.js':{ProjectCollector:class{configure(){}status(){return {};}dispose(){}}},'./state.js':{PluginState:class{}},'./platform-session.js':{normalizeWebUrl:(input:string)=>new URL(input).origin,platformRequest:async(_origin:string,path:string)=>{if(path==='/api/v1/plugin/me'){meRequests++;if(!connected)throw new PluginHttpError(0,'request_timeout');}return {data:{user_id:binding.user_id,email:binding.email}};}},'./hook-setup.js':{ensureHook:async()=>{installs++;return {state:'ready',profile:'synthetic'};}},'./today-overview.js':{TodayOverview:class{snapshot(){return {data:null,stale:false};}async clear(){}async refresh(){}}},'./overview-ui.js':{overviewHtml:()=>''},'./updater.js':{PluginUpdater:class{snapshot(){return {};}configure(){}async restore(){}async check(){}dispose(){}}}};
+ const source=await readFile(new URL('../src/extension.ts',import.meta.url),'utf8');
+ const {code}=await transform(source,{loader:'ts',format:'cjs',target:'node18',define:{__ADI_PLUGIN_DEFAULT_SERVER__:'""',__ADI_PLUGIN_RELEASE_VERSION__:'"1.0.1"',__ADI_PLUGIN_BUILD_ID__:'"synthetic"'}});
+ const module={exports:{} as {activate(context:unknown):{refresh():void};deactivate():Promise<void>}};
+ runInNewContext(code,{module,exports:module.exports,require:(name:string)=>replacements[name]??actualRequire(name),process:{platform:'win32'},console,Buffer,URL,AbortController,setInterval:()=>({unref(){}}),clearInterval(){},setTimeout,clearTimeout});
+ const api=module.exports.activate({globalStorageUri:{fsPath:'/synthetic/storage'},subscriptions:[],globalState:{get:()=>undefined,update:async()=>{}},secrets:{get:async()=>JSON.stringify(binding),onDidChange:disposable}});t.after(()=>module.exports.deactivate());
+ provider!.resolveWebviewView({visible:false,webview:{postMessage:async(value:typeof posted[number])=>{posted.push(value);return true;},onDidReceiveMessage:(fn:typeof handler)=>{handler=fn;return disposable();}},onDidChangeVisibility:disposable});
+ const latest=()=>posted.filter(value=>value.type==='state').at(-1)!.state;
+ const deadline=Date.now()+2000;while(!latest().error.includes('暂时无法验证平台连接')&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,5));
+ assert.ok(latest().error.includes('暂时无法验证平台连接'));assert.ok(latest().error.includes('请求超时'));assert.equal(latest().hook,'等待平台连接验证');assert.equal(installs,0);const before=meRequests;
+ await handler!({op:'repair'});assert.ok(meRequests>before);assert.equal(installs,0);assert.equal(latest().hook,'等待平台连接验证');const retryRequests=meRequests;
+ connected=true;await handler!({op:'repair'});await new Promise(resolve=>setTimeout(resolve,10));
+ assert.ok(meRequests>retryRequests,'重试必须重新验证平台连接');assert.equal(installs,1,'连接恢复后必须安装 Hook');assert.equal(latest().error,'');
+ let release!:()=>void;const started=new Promise<void>(resolve=>{pulseStarted=resolve;});pulseGate=new Promise<void>(resolve=>{release=resolve;});
+ const beforeSlow=pulseCalls;api.refresh();await started;for(let i=0;i<20;i++)api.refresh();const retry=handler!({op:'repair'});pulseGate=undefined;release();await retry;
+ assert.equal(pulseCalls-beforeSlow,2,'慢运行检查期间的心跳和重试只能保留一个待执行检查，不能累积队列');
+});

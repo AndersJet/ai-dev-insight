@@ -1,0 +1,71 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { testDatabase } from '../../../../packages/storage/test/helpers.js';
+import { createIdentityService } from '../../../../packages/domain/src/identity.js';
+import { createSessionReadService } from '../../../../packages/domain/src/session-reading.js';
+import { createSessionPersonalModelService } from '../../../../packages/domain/src/session-personal-models.js';
+import { createApi } from '../../src/app.js';
+import {createSessionTokenChecks} from '../../../../packages/domain/src/session-token-checks.js';
+
+test('session HTTP routes expose bounded owner content and reject statistics-only roles requesting another person’s session', async t => {
+  const db = await testDatabase(t); await db.migrate();
+  const now = new Date(); await db.ensurePartitions(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)), new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)));
+  const identity = createIdentityService(db, { emailDomains: ['example.invalid'] });
+  const seed = await identity.bootstrap({ email: 'sessions-api@example.invalid', name: '会话API' });
+  const temp = await identity.login('sessions-api@example.invalid', seed.temporaryPassword);
+  const root = await identity.changePassword(temp.token, seed.temporaryPassword, 'sessions-api-password');
+  const installation = randomUUID();
+  await db.query('INSERT INTO installations(id,user_id,token_hash,label) VALUES($1,$2,$3,$4)', [installation, root.user.user_id, 'c'.repeat(64), 'API合成安装']);
+  const ingest = await db.ingestJson(`{"schema_version":2,"installation_id":"${installation}","client_event_id":"http-prompt","occurred_at":"${now.toISOString()}","event_type":"UserPromptSubmit","source_session_id":"http-session","payload":{"prompt":"甲😀乙<script>unsafe()</script>","large":9007199254740993}}`, { admissionEpoch: 1, receivedAt: now });
+  if (ingest.outcome !== 'committed') throw new Error('fixture failed');
+  const api = createApi(undefined, { identity, sessions: createSessionReadService(db, identity),sessionModels:createSessionPersonalModelService(db,identity) }); t.after(() => api.close());
+  const prefix = `/api/v1/sessions/${ingest.sessionId}`; const headers = { cookie: `adi_session=${root.token}` };
+  assert.equal((await api.inject(`${prefix}/token-check`)).statusCode,401);
+  const unchecked=await api.inject({url:`${prefix}/token-check`,headers});assert.equal(unchecked.statusCode,200);assert.equal(unchecked.json().data.state,'not_checked');
+  const tokenChecks=createSessionTokenChecks(db);await tokenChecks.enqueue(ingest.sessionId);await tokenChecks.runOne();
+  const checked=await api.inject({url:`${prefix}/token-check`,headers});assert.equal(checked.statusCode,200);assert.equal(checked.json().data.state,'current');assert.equal(checked.json().data.result.eligible,false);assert.equal(checked.json().data.result.verdict,'insufficient_data');assert.ok(checked.json().data.result.reasons.includes('trace_pending'));assert.ok(!checked.body.includes('unsafe'));assert.equal(checked.headers['cache-control'],'no-store');
+  assert.equal((await api.inject('/api/v1/me/sessions')).statusCode, 401);
+  const list = await api.inject({ url: '/api/v1/me/sessions', headers }); assert.equal(list.statusCode, 200); assert.equal(list.json().data.total, 1); assert.equal(list.headers['cache-control'], 'no-store');
+  assert.equal((await api.inject({ url: '/api/v1/me/sessions?user_id=' + root.user.user_id, headers })).statusCode, 400);
+  const detail = await api.inject({ url: prefix, headers }); assert.equal(detail.statusCode, 200); assert.equal(detail.json().data.prompt_turns, 1); assert.equal(detail.json().data.content_estimate.tokens, null); assert.equal(detail.json().data.content_estimate.reason, null);
+  assert.equal(Object.hasOwn(detail.json().data,'channel'),false,'session metadata must not contradict its separate classified usage resources with a constant unknown placeholder');assert.equal(Object.hasOwn(detail.json().data,'official_tokens'),false);
+  assert.equal((await api.inject(`${prefix}/official-usage`)).statusCode,401);
+  const official=await api.inject({url:`${prefix}/official-usage`,headers});assert.equal(official.statusCode,200);assert.equal(official.json().data.configured,false);assert.deepEqual(official.json().data.groups,[]);
+  assert.deepEqual(official.json().data.session_coverage,{state:'unknown',reason:'billing_id_inventory_unavailable'});
+  assert.deepEqual(list.json().data.items[0].session_coverage,{state:'unknown',reason:'billing_id_inventory_unavailable'});
+  const configured=createApi(undefined,{identity,sessions:createSessionReadService(db,identity,{providerAccount:'http-detail-test'})});t.after(()=>configured.close());
+  const pending=await configured.inject({url:`${prefix}/official-usage`,headers});assert.equal(pending.statusCode,200);assert.equal(pending.json().data.configured,true);assert.equal(pending.json().data.coverage.expected_days,1);assert.equal(pending.json().data.coverage.missing_days,1);assert.equal(pending.json().data.attribution.state,'unlinked');
+  assert.equal(pending.json().data.attribution.probe_state,'not_queried');assert.equal(pending.json().data.attribution.pending,false);assert.equal(pending.json().data.attribution.requested_at,null);assert.equal(pending.json().data.attribution.probe_revision,null);assert.match(pending.json().data.coverage.revision,/^[a-f0-9]{32}$/);
+  assert.equal((await configured.inject({url:`${prefix}/official-usage?user_id=${randomUUID()}`,headers})).statusCode,400);
+  const models=await api.inject({url:`${prefix}/personal-models`,headers});assert.equal(models.statusCode,200);assert.equal(models.json().data.can_edit,true);
+  const modelBody={version:models.json().data.version,cleanup_generation:models.json().data.cleanup_generation,models:['自配合成模型']};
+  assert.equal((await api.inject({method:'PUT',url:`${prefix}/personal-models`,headers,payload:modelBody})).statusCode,403);
+  const confirmed=await api.inject({method:'PUT',url:`${prefix}/personal-models`,headers:{...headers,'x-csrf-token':root.csrfToken},payload:modelBody});assert.equal(confirmed.statusCode,200);assert.equal(confirmed.json().data.source,'user_declared');
+  const custom=await api.inject({url:'/api/v1/me/sessions?channel=custom',headers});assert.equal(custom.statusCode,200);assert.equal(custom.json().data.total,1);assert.equal(custom.json().data.items[0].official_tokens,null);
+  const turns = await api.inject({ url: `${prefix}/turns`, headers }); assert.equal(turns.statusCode, 200); assert.equal(turns.json().data.projection_ready, false);
+  const fragments = await api.inject({ url: `${prefix}/fragments`, headers }); assert.equal(fragments.statusCode, 200); assert.ok(!fragments.body.includes('unsafe'));
+  const simulation=await api.inject({url:`${prefix}/billing-simulation`,headers});assert.equal(simulation.statusCode,200);assert.equal(simulation.json().data.reason,'projection_pending');assert.equal(simulation.json().data.amount,null);assert.equal(simulation.json().data.baseline.calibrated,false);assert.equal(simulation.json().data.baseline.training_before,simulation.json().data.period.from);assert.equal(simulation.json().data.computed_at,null);
+  assert.equal((await api.inject({url:`${prefix}/billing-simulation?base_tokens=-1`,headers})).statusCode,400);
+  assert.equal((await api.inject({url:`${prefix}/billing-simulation?from=2020-01-01`,headers})).statusCode,400);
+  const bodyUrl = `${prefix}/events/${ingest.eventId}/content`;
+  const first = await api.inject({ url: `${bodyUrl}?part=prompt&limit=2`, headers }); assert.equal(first.statusCode, 200); assert.equal(first.json().data.text, '甲😀'); assert.equal(first.json().data.next_offset, 2);
+  const second = await api.inject({ url: `${bodyUrl}?part=prompt&offset=2&limit=1`, headers }); assert.equal(second.json().data.text, '乙');
+  const raw = await api.inject({ url: `${bodyUrl}?part=payload`, headers }); assert.equal(raw.statusCode, 200); assert.ok(raw.json().data.text.includes('9007199254740993'));
+  assert.equal((await api.inject({ url: `${bodyUrl}?part=payload&limit=8193`, headers })).statusCode, 400);
+  assert.equal((await api.inject({ url: `${bodyUrl}?part=payload&offset=2147483647`, headers })).statusCode, 400);
+  await db.ingest({schema_version:2,installation_id:installation,client_event_id:'http-stop',occurred_at:now.toISOString(),event_type:'Stop',source_session_id:'http-session',payload:{loop_count:0,stop_hook_active:false,last_assistant_message:'private-stop-body'}},{admissionEpoch:1,receivedAt:now});
+  const stopPage=await api.inject({url:`${prefix}/fragments?mode=raw`,headers});assert.equal(stopPage.statusCode,200);assert.deepEqual(stopPage.json().data.items.find((row:{kind:string})=>row.kind==='Stop').stop,{reentry_count:0,count_state:'valid',hook_active:false});assert.ok(!stopPage.body.includes('private-stop-body'));
+  for (const role of ['anc_admin', 'department_admin', 'employee']) {
+    const user = randomUUID(); const dept = randomUUID();
+    await db.query('INSERT INTO users(id,email_key,display_name) VALUES($1,$2,$3)', [user, `${role}@example.invalid`, role]);
+    if (role === 'department_admin') await db.query('INSERT INTO departments(id,name) VALUES($1,$2)', [dept, 'API授权部门']);
+    if (role !== 'employee') await db.query('INSERT INTO role_grants(user_id,role,scope_id,valid_from) VALUES($1,$2,$3,clock_timestamp())', [user, role, role === 'department_admin' ? dept : null]);
+    const issued = await identity.resetPassword(root.token, user, 1); const initial = await identity.login(`${role}@example.invalid`, issued.temporaryPassword);
+    const login = await identity.changePassword(initial.token, issued.temporaryPassword, 'sessions-other-password'); const otherHeaders = { cookie: `adi_session=${login.token}` };
+    assert.equal((await api.inject({ url: '/api/v1/admin/sessions', headers: otherHeaders })).statusCode, 403);
+    for (const url of [prefix, `${prefix}/token-check`, `${prefix}/billing-simulation`, `${prefix}/personal-models`, `${prefix}/official-usage`, `${prefix}/turns`, `${prefix}/fragments`, `${bodyUrl}?part=payload`]) {
+      const denied = await api.inject({ url, headers: otherHeaders }); assert.equal(denied.statusCode, 404); assert.ok(!denied.body.includes('unsafe'));
+    }
+  }
+});

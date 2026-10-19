@@ -1,0 +1,40 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {pluginFixture} from '../plugin-fixture.js';
+
+test('plugin project and history reads classify every address using the current shared repository rules without altering evidence',async t=>{
+  const {db,app,root,headers,source}=await pluginFixture(t),sender=await source();
+  const registration=sender,issued={collector_id:sender.collector_id,nt_email:sender.nt_email};
+  const addresses=[{address:'ssh://10.2.3.4/team/internal.git'},{address:'https://host.example.invalid/team/host.git'},{address:'https://repository.example.invalid/team/one.git'},{address:'https://personal.example.invalid/team/two.git'},{address:null}];
+  const event={schema_version:2,collector_id:issued.collector_id,nt_email:issued.nt_email,source_config_id:registration.source_config_id,observation_id:randomUUID(),sequence:'1',platform:'macos',workspace_path:'/synthetic/affiliation',observed_at:'2024-01-01T00:00:00.000Z',state:'repository',reason:null,git_root:'/synthetic/affiliation',remotes:addresses,plugin_version:'0.1.0'};
+  const uploadHeaders=sender.uploadHeaders;
+  assert.equal((await app.inject({method:'POST',url:'/api/v1/plugin/observations',headers:uploadHeaders,payload:event})).statusCode,201);
+  assert.equal((await app.inject({method:'POST',url:'/api/v1/plugin/observations',headers:uploadHeaders,payload:{...event,observation_id:randomUUID(),sequence:'2',workspace_path:'/synthetic/affiliation-other',git_root:'/synthetic/affiliation-other'}})).statusCode,201);
+  const historyUrl='/api/v1/plugin/observations?'+new URLSearchParams({collector_id:issued.collector_id,nt_email:issued.nt_email,workspace_path:event.workspace_path});
+  type Remote={address:string|null;host:string|null;source_tag:'department'|'personal'|null;reason:string};
+  const expected=(departmentHosts:string[]=[],repositoryAllowed=false):Remote[]=>addresses.map(({address},index)=>({address,host:index===4?null:index===0?'10.2.3.4':new URL(address!).hostname,source_tag:index===4?null:index===0||departmentHosts.includes(new URL(address!).hostname)||index===2&&repositoryAllowed?'department':'personal',reason:index===4?'unrecognized':index===0?'internal_ipv4':departmentHosts.includes(new URL(address!).hostname)||index===2&&repositoryAllowed?'allowlist':'unmatched'}));
+  const rawQuery=db.query.bind(db);let ruleQueries=0;
+  db.query=(...args:Parameters<typeof db.query>)=>{if(/SELECT kind\s*,\s*value FROM repository_allowlist/.test(args[0]))ruleQueries++;return rawQuery(...args);};
+  const check=async(remotes:Remote[],failed=false)=>{
+    ruleQueries=0;const projects=await app.inject({url:'/api/v1/plugin/projects',headers});assert.equal(projects.statusCode,200,projects.body);assert.equal(projects.json().data.total,2);
+    const current=projects.json().data.items.find((project:{workspace_path:string})=>project.workspace_path===event.workspace_path);
+    assert.deepEqual(current.latest.remotes,failed?[]:remotes,'latest Git addresses must include affiliation');assert.deepEqual(current.confirmed.remotes,remotes,'last confirmed evidence uses current rules');
+    assert.equal(ruleQueries,1,'one rule snapshot serves the entire project page');
+    ruleQueries=0;const history=await app.inject({url:historyUrl,headers});assert.equal(history.statusCode,200,history.body);assert.deepEqual(history.json().data.items.at(-1).remotes,remotes,'history uses current rules');assert.equal(ruleQueries,1,'one rule snapshot serves the entire history page');
+  };
+  await check(expected());
+  const create=async(payload:Record<string,unknown>)=>{const response=await app.inject({method:'POST',url:'/api/v1/repository-allowlist',headers,payload});assert.equal(response.statusCode,201,response.body);return response.json().data;};
+  const host=await create({kind:'host',value:'HOST.EXAMPLE.INVALID'});await check(expected(['host.example.invalid']));
+  const repository=await create({kind:'repository',value:addresses[2]!.address});await check(expected(['host.example.invalid'],true));
+  const changed=await app.inject({method:'PATCH',url:`/api/v1/repository-allowlist/${host.id}`,headers,payload:{kind:'host',value:'personal.example.invalid',version:host.version}});assert.equal(changed.statusCode,200,changed.body);await check(expected(['personal.example.invalid'],true));
+  assert.equal((await app.inject({method:'POST',url:'/api/v1/plugin/observations',headers:uploadHeaders,payload:{...event,observation_id:randomUUID(),sequence:'3',state:'failed',reason:'timeout',git_root:null,remotes:[]}})).statusCode,201);await check(expected(['personal.example.invalid'],true),true);
+  assert.equal((await app.inject({method:'DELETE',url:`/api/v1/repository-allowlist/${host.id}`,headers,payload:{version:changed.json().data.version}})).statusCode,204);await check(expected([],true),true);
+  assert.equal((await app.inject({method:'DELETE',url:`/api/v1/repository-allowlist/${repository.id}`,headers,payload:{version:repository.version}})).statusCode,204);await check(expected(),true);
+  const unchanged=(await app.inject({url:historyUrl,headers})).json().data.items.at(-1);
+  assert.equal(unchanged.observation_id,event.observation_id);assert.equal(unchanged.sequence,'1');assert.deepEqual(unchanged.remotes.map((r:Remote)=>({address:r.address})),addresses,'classification preserves source address evidence');
+  assert.equal((await app.inject({url:historyUrl})).statusCode,401);
+  assert.equal((await app.inject({url:historyUrl,headers:uploadHeaders})).statusCode,401);
+  await db.query('DELETE FROM role_grants WHERE user_id=$1',[root.user.user_id]);
+  for(const url of ['/api/v1/plugin/projects',historyUrl])assert.equal((await app.inject({url,headers})).statusCode,403,'classification does not broaden read access');
+});

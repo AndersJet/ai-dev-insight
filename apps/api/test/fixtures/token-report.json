@@ -1,0 +1,285 @@
+{
+  "version": "token-report-v2",
+  "mode": "demo",
+  "title": "订单接口幂等修复",
+  "scope_label": "2 个关联会话 · 2026 / 10 / 17—18 · 北京时间 · 合成示例",
+  "verdict": "修复有证据，异常分支仍缺验收。",
+  "status": "mixed",
+  "summary": "已见 3 项要求中，2 项有测试支持。异常重试仅见 AI 声明，当前材料不足以确认该分支的交付质量。",
+  "critical_gaps": [],
+  "top_action": "把验收证据写进交付要求。",
+  "top_action_reason": "让 AI 按要求列出实际执行结果，没有运行的明确说明。",
+  "findings": [
+    {
+      "title": "核心测试带来了可核实的结果",
+      "detail": "并发与正常流程测试直接对应验收要求，这类投入值得保留。",
+      "kind": "observed",
+      "alternative": "结论仅限已见测试覆盖。",
+      "evidence_ids": [
+        "E2"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "title": "重复请求只产生一个订单",
+      "origin": "用户明确要求 · Session A / ev-001",
+      "action": "增加幂等控制，并执行并发请求测试。",
+      "verification": "PostToolUse 中有相应测试通过结果。",
+      "conclusion": "测试范围内有验收支持。",
+      "boundary": "不代表线上行为或所有异常场景。",
+      "status": "supported",
+      "evidence_ids": [
+        "E1",
+        "E2"
+      ]
+    },
+    {
+      "title": "保留正常下单流程",
+      "origin": "用户明确要求 · Session A / ev-001",
+      "action": "执行原有下单流程的回归测试。",
+      "verification": "正常订单流程测试通过。",
+      "conclusion": "已见回归范围内有支持。",
+      "boundary": "未覆盖的接口与线上部署不在本结论内。",
+      "status": "supported",
+      "evidence_ids": [
+        "E2"
+      ]
+    },
+    {
+      "title": "失败重试的退避处理",
+      "origin": "AI 计划 · Session B / ev-003",
+      "action": "最终回答声明已完成重试处理。",
+      "verification": "当前材料未观察到对应运行结果。",
+      "conclusion": "仅见 AI 声明，无法确认验收质量。",
+      "boundary": "未见证据不等于未实现；也不能视作已验收。",
+      "status": "claimed",
+      "evidence_ids": [
+        "E3"
+      ]
+    }
+  ],
+  "communication": {
+    "summary": "核心目标清楚，交付证据的约定可以更具体。",
+    "keep": "“相同请求只创建一个订单”是可验收的行为描述，应保留。",
+    "keep_evidence_ids": [
+      "E1"
+    ],
+    "findings": [
+      {
+        "title": "异常分支的证据要求没有形成明确约定",
+        "detail": "可在最终交付格式中要求逐项列出执行结果和未验证项。",
+        "kind": "inferred",
+        "alternative": "AI 即使未被明确要求，也应如实说明验证范围；缺口不能全部归因于用户。",
+        "evidence_ids": [
+          "E1",
+          "E3"
+        ]
+      }
+    ],
+    "chains": [
+      "用户明确幂等目标 → AI 执行并发测试 → 测试支持局部结果。",
+      "跨会话补充异常重试 → 最终声明完成 → 当前未见对应运行结果。"
+    ]
+  },
+  "execution": {
+    "summary": "核心验证有信息增益；文件重复全文读取存在压缩机会。",
+    "keep": "保留与用户要求直接对应的并发测试与正常流程回归。",
+    "keep_evidence_ids": [
+      "E2"
+    ],
+    "findings": [
+      {
+        "title": "上下文使用：相同文件被三次全文读取",
+        "detail": "中间未观察到文件修改，后续可优先复用结论或读取差异。",
+        "kind": "observed",
+        "alternative": "Hook 不包含模型内部上下文；裁剪、切换等因素可能使重读合理。",
+        "evidence_ids": [
+          "E4"
+        ]
+      },
+      {
+        "title": "验证与交付：声明超出了已见验证范围",
+        "detail": "异常重试仅见完成声明，最终交付应标明未观察验证。",
+        "kind": "observed",
+        "alternative": "相关验证也可能未被采集，不能直接判断功能有缺陷。",
+        "evidence_ids": [
+          "E3"
+        ]
+      },
+      {
+        "title": "执行与排障：未见足够的失败修复链",
+        "detail": "材料中未提供可据此评价策略调整的连续失败记录。",
+        "kind": "unknown",
+        "alternative": "不据此断言没有失败或排障。",
+        "evidence_ids": []
+      }
+    ],
+    "chains": [
+      "已见文件未变化 → 三次读取全文 → 仅提示定点读取机会，不直接认定浪费。"
+    ]
+  },
+  "costs": {
+    "official": [
+      {
+        "label": "已关联官方用量",
+        "value": "640,000 Token",
+        "coverage": "2 个会话 · 关联记录已去重 · 完整覆盖未知",
+        "evidence_ids": [
+          "E5"
+        ]
+      }
+    ],
+    "boundary": "已关联用量不等于任务全部成本，不分摊到某一次工具调用。",
+    "scales": [
+      {
+        "label": "有验收支持的要求",
+        "value": "2 / 已见 3 项",
+        "definition": "逐项对照任务要求，仅说明已见测试范围。",
+        "evidence_ids": [
+          "E1",
+          "E2",
+          "E3"
+        ]
+      },
+      {
+        "label": "用户提示轮次",
+        "value": "18 轮",
+        "definition": "仅统计所选材料中的用户提示，不等于模型调用次数。",
+        "evidence_ids": []
+      }
+    ],
+    "conclusion": "结果与消耗并列展示，不计算统一能效分或单位 Token 质量分。",
+    "budget_advice": "保留关键验收与必要探索；优先检查无变化文件的重复全文读取，复用已有结论，必要时读取差异。当前没有可靠计量，不承诺节省比例。"
+  },
+  "actions": [
+    {
+      "owner": "用户沟通",
+      "title": "把“要求—结果—证据”写进交付格式",
+      "evidence_ids": [
+        "E1",
+        "E3"
+      ],
+      "condition": "异常重试只有完成声明；明确交付格式有助于减少补问，但 AI 同样有如实说明验证范围的责任。",
+      "steps": [
+        "列出幂等、正常流程、异常重试三类验收要求。",
+        "要求最终回答逐项给出实际执行结果、证据位置与未执行项。"
+      ],
+      "prompt": "请逐项对照幂等、正常流程和异常重试要求，给出实际执行结果及证据位置。没有运行的明确标注，不把完成声明当成验收结果。",
+      "expected_effect": "让交付状态可核实，减少遗漏和来回追问。",
+      "limitation": "不能保证模型遵从；不代表已发现功能缺陷。"
+    },
+    {
+      "owner": "AI 执行",
+      "title": "复读前先确认文件与上下文变化",
+      "evidence_ids": [
+        "E4"
+      ],
+      "condition": "同一文件多次全文读取，中间未观察到修改；上下文裁剪等因素也可能使重读必要。",
+      "steps": [
+        "已有片段仍可用时，复用读取结论。",
+        "需要确认变更时，按符号、行范围或差异定点读取。"
+      ],
+      "prompt": "后续检查请先复用已读结论；文件有变更时查看差异，需要补充时按符号或行范围读取。上下文已裁剪或已有片段不足时再重读，并说明原因。",
+      "expected_effect": "减少没有新增信息的上下文输入机会。",
+      "limitation": "没有逐请求用量，不能把重读次数换算成节省 Token。"
+    },
+    {
+      "owner": "用户沟通",
+      "title": "跨会话续接时提供最小任务摘要",
+      "evidence_ids": [
+        "E1",
+        "E3"
+      ],
+      "condition": "本次材料来自跨天会话；续接摘要是合理建议，但不能从现有 Hook 证明模型遗失了上下文。",
+      "steps": [
+        "保留任务目标、已完成项、验收证据位置。",
+        "列出剩余问题和范围边界，再继续任务。"
+      ],
+      "prompt": "继续订单接口修复。目标：相同请求只创建一个订单。已完成：幂等与正常流程测试；证据见上一会话的测试结果。剩余：异常重试，交付时注明验证状态。",
+      "expected_effect": "让后续会话更快聚焦剩余工作。",
+      "limitation": "仅是有条件的协作建议，不断言上下文曾经丢失。"
+    }
+  ],
+  "scope": {
+    "sessions": [
+      {
+        "id": "Session A（合成）",
+        "date": "2026-10-17",
+        "relation": "幂等要求、实现及测试"
+      },
+      {
+        "id": "Session B（合成）",
+        "date": "2026-10-18",
+        "relation": "用户关联的后续异常重试工作"
+      }
+    ],
+    "timezone": "北京时间 UTC+08:00",
+    "input_visibility": "合成 Hook 事件、最小字段摘录与已关联官方用量。",
+    "gaps": "模型内部上下文、线上行为和账单全集不可见。",
+    "attribution": "用户选择定义材料集合；同任务续接依据仅限示例中的任务引用。",
+    "unassigned": "不对未明确归属任务的成本做分摊。"
+  },
+  "evidence": [
+    {
+      "id": "E1",
+      "title": "验收目标已明确",
+      "source": "原始 Hook（合成）",
+      "session": "Session A",
+      "locator": "ev-001 / UserPromptSubmit / prompt",
+      "time": "2026-10-17 09:12 +08:00",
+      "excerpt": "修复重复提交产生多个订单的问题。相同请求只创建一个订单，同时保证原有下单流程可用。",
+      "supports": "确认用户的幂等目标和正常流程要求。",
+      "limits": "没有定义异常重试的具体验收方式。",
+      "truncation": "合成示例，摘录已最小化；不对应真实用户材料"
+    },
+    {
+      "id": "E2",
+      "title": "并发与正常流程测试通过",
+      "source": "工具结果（合成）",
+      "session": "Session A",
+      "locator": "ev-034 / PostToolUse / tool_response",
+      "time": "2026-10-17 10:08 +08:00",
+      "excerpt": "PASS order-idempotency.test.ts\n✓ concurrent duplicate requests create one order\n✓ normal order workflow remains valid",
+      "supports": "支持已见测试范围内的两项要求。",
+      "limits": "不证明线上行为、部署成功或全部边界场景。",
+      "truncation": "合成示例，摘录已最小化；不对应真实用户材料"
+    },
+    {
+      "id": "E3",
+      "title": "异常重试仅见声明",
+      "source": "AI 最终回答（合成）",
+      "session": "Session B",
+      "locator": "ev-019 / Stop / assistant_response",
+      "time": "2026-10-18 11:35 +08:00",
+      "excerpt": "已完成失败重试的退避处理，并补充了相关逻辑。",
+      "supports": "支持 AI 声明完成异常重试。",
+      "limits": "缺少运行验证；不能升级为通过，也不能直接认定未实现。",
+      "truncation": "合成示例，摘录已最小化；不对应真实用户材料"
+    },
+    {
+      "id": "E4",
+      "title": "同一文件被重复完整读取",
+      "source": "工具输入（合成）",
+      "session": "Session B",
+      "locator": "ev-008 / ev-011 / ev-013 / PreToolUse",
+      "time": "2026-10-18 11:08—11:15 +08:00",
+      "excerpt": "同一测试文件被连续三次全文读取；两次读取之间未观察到该文件修改。",
+      "supports": "支持范围内存在重复读取，可考虑定点读取。",
+      "limits": "不包含模型内部上下文；不能证明全部重读无必要，也不能换算实际 Token。",
+      "truncation": "合成示例，摘录已最小化；不对应真实用户材料"
+    },
+    {
+      "id": "E5",
+      "title": "官方用量完整覆盖未知",
+      "source": "官方用量（合成）",
+      "session": "Session A / B",
+      "locator": "official-usage.json / records[0..1]",
+      "time": "记录范围：2026-10-17—18",
+      "excerpt": "按记录标识去重后已关联用量为 640,000 Token。完整覆盖未知。",
+      "supports": "支持已关联记录的用量合计。",
+      "limits": "不能作为完整任务成本，不能分配到各步骤或计算质量/Token分数。",
+      "truncation": "合成示例，摘录已最小化；不对应真实用户材料"
+    }
+  ]
+}

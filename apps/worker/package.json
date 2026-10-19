@@ -1,0 +1,21 @@
+{
+  "name": "@adi/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "tsx watch src/supervisor-main.ts",
+    "usage": "node dist/usage-main.js",
+    "cleanup": "node dist/cleanup-main.js",
+    "maintenance": "node dist/maintenance-main.js",
+    "start": "node dist/supervisor-main.js"
+  },
+  "dependencies": {
+    "@adi/tsconfig": "workspace:*",
+    "@adi/storage": "workspace:*",
+    "@adi/domain": "workspace:*"
+  },
+  "license": "Apache-2.0"
+}

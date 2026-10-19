@@ -1,0 +1,127 @@
+# Four resident applications plus a one-shot initialization step.
+# Create shared network once: docker network create adi
+x-runtime: &runtime
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 128
+  stop_grace_period: 15s
+  logging:
+    driver: json-file
+    options: {max-size: "5m", max-file: "2"}
+x-database: &database
+  NODE_ENV: production
+  ADI_DATABASE_URL: ${ADI_DATABASE_URL:?provide the application database URL}
+  ADI_DATABASE_SCHEMA: ${ADI_DATABASE_SCHEMA:-adi}
+
+services:
+  initialize:
+    <<: *runtime
+    restart: "no"
+    image: ${ADI_IMAGE_PREFIX:-adi-product}-api:${ADI_IMAGE_TAG:?provide the reviewed image tag}
+    command: ["node", "apps/api/dist/cli.js", "init"]
+    environment:
+      <<: *database
+      ADI_EMAIL_DOMAINS: ${ADI_EMAIL_DOMAINS:-}
+      ADI_ADMIN_EMAIL: ${ADI_ADMIN_EMAIL:?provide the configuration administrator email}
+      ADI_ADMIN_PASSWORD: ${ADI_ADMIN_PASSWORD:?provide the configuration administrator password}
+      ADI_INSTALLATION_KEY_FILE: /var/lib/adi-credentials/installation.key
+    volumes: ["collection-keys:/var/lib/adi-credentials"]
+    mem_limit: 512m
+    cpus: 0.5
+
+  api:
+    <<: *runtime
+    image: ${ADI_IMAGE_PREFIX:-adi-product}-api:${ADI_IMAGE_TAG:?provide the reviewed image tag}
+    environment:
+      <<: *database
+      ADI_EMAIL_DOMAINS: ${ADI_EMAIL_DOMAINS:-}
+      ADI_WEB_ORIGIN: ${ADI_WEB_ORIGIN:?provide the exact HTTP or HTTPS web origin}
+      ADI_PUBLIC_COLLECTOR_URL: ${ADI_PUBLIC_COLLECTOR_URL:?provide the HTTP or HTTPS hooks URL}
+      ADI_INSTALLATION_KEY_FILE: /var/lib/adi-credentials/installation.key
+
+      ADI_CLEANUP_JOURNAL_DIR: /var/lib/adi-cleanup
+      ADI_USAGE_PROVIDER_ACCOUNT: ${ADI_USAGE_PROVIDER_ACCOUNT:-}
+      ADI_USAGE_STOP_WINDOW_ENABLED: ${ADI_USAGE_STOP_WINDOW_ENABLED:-false}
+      ADI_STORAGE_BUDGET_BYTES: ${ADI_STORAGE_BUDGET_BYTES:-}
+    volumes:
+      - collection-keys:/var/lib/adi-credentials
+      - type: bind
+        source: ${ADI_CLEANUP_JOURNAL_HOST_DIR:?provide a private persistent cleanup journal directory}
+        target: /var/lib/adi-cleanup
+        bind: {create_host_path: false}
+    depends_on:
+      initialize: {condition: service_completed_successfully}
+    mem_limit: 768m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4180/api/v1/me',{signal:AbortSignal.timeout(1500)}).then(r=>process.exit(r.status===401?0:1)).catch(()=>process.exit(1))"]
+      # First complete publication plus full metadata warm precede listening.
+      start_period: 120s
+      interval: 10s
+      timeout: 2s
+      retries: 3
+
+  collector:
+    <<: *runtime
+    image: ${ADI_IMAGE_PREFIX:-adi-product}-collector:${ADI_IMAGE_TAG:?provide the reviewed image tag}
+    environment: *database
+    ports: ["127.0.0.1:${ADI_COLLECTOR_HOST_PORT:-4186}:4186"]
+    depends_on:
+      initialize: {condition: service_completed_successfully}
+    mem_limit: 1g
+    cpus: 1.25
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4186/readyz',{signal:AbortSignal.timeout(1500)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+
+  worker:
+    <<: *runtime
+    image: ${ADI_IMAGE_PREFIX:-adi-product}-worker:${ADI_IMAGE_TAG:?provide the reviewed image tag}
+    environment:
+      <<: *database
+      ADI_EMAIL_DOMAINS: ${ADI_EMAIL_DOMAINS:-}
+      ADI_CLEANUP_JOURNAL_DIR: /var/lib/adi-cleanup
+      ADI_USAGE_ENABLED: ${ADI_USAGE_ENABLED:-false}
+      ADI_USAGE_STOP_WINDOW_ENABLED: ${ADI_USAGE_STOP_WINDOW_ENABLED:-false}
+      ADI_USAGE_PROVIDER_ACCOUNT: ${ADI_USAGE_PROVIDER_ACCOUNT:-}
+      TRAE_OPENAPI_APP_ID: ${TRAE_OPENAPI_APP_ID:-}
+      TRAE_OPENAPI_APP_SECRET: ${TRAE_OPENAPI_APP_SECRET:-}
+      ADI_STORAGE_BUDGET_BYTES: ${ADI_STORAGE_BUDGET_BYTES:-}
+      ADI_ALERT_WEBHOOK_URL: ${ADI_ALERT_WEBHOOK_URL:-}
+      ADI_ALERT_WEBHOOK_TOKEN: ${ADI_ALERT_WEBHOOK_TOKEN:-}
+    volumes:
+      - type: bind
+        source: ${ADI_CLEANUP_JOURNAL_HOST_DIR:?provide a private persistent cleanup journal directory}
+        target: /var/lib/adi-cleanup
+        bind: {create_host_path: false}
+    depends_on:
+      initialize: {condition: service_completed_successfully}
+    mem_limit: 1536m
+    cpus: 0.6
+
+  web:
+    <<: *runtime
+    image: ${ADI_IMAGE_PREFIX:-adi-product}-web:${ADI_IMAGE_TAG:?provide the reviewed image tag}
+    ports: ["127.0.0.1:${ADI_WEB_HOST_PORT:-4181}:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+    mem_limit: 128m
+    cpus: 0.1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+networks:
+  default:
+    name: adi
+    external: true
+
+volumes:
+  collection-keys:

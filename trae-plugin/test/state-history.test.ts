@@ -1,0 +1,8 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';
+import {ProjectCollector,type ProbeResult} from '../src/collector.js';
+test('a failed Git probe is an observation and recovering to the same repository creates a fresh fact',async()=>{
+  let time=0;let sequence=0;const pending:(()=>void)[]=[];const sent:string[]=[];
+  const results:ProbeResult[]=[{state:'repository',reason:null,git_root:'/work',remotes:[{name:'origin',direction:'fetch',address:'https://git.example.invalid/team/project.git'}]},{state:'failed',reason:'git_error',git_root:null,remotes:[]},{state:'repository',reason:null,git_root:'/work',remotes:[{name:'origin',direction:'fetch',address:'https://git.example.invalid/team/project.git'}]}];
+  const collector=new ProjectCollector({clock:{now:()=>time,schedule:fn=>{pending.push(fn);return ()=>{};}},identity:async()=>({source_secret:'s'.repeat(43),source_config_id:'66c72520-8662-4b25-8e2f-9bd12b3b6d01'}),register:async()=>({collector_id:'790a9543-b4f2-4c99-97dc-7ac6688b5c9d',nt_email:'test@example.org',token:'synthetic'}),nextSequence:async()=>String(++sequence),probe:async()=>results.shift()!,submit:async event=>{sent.push(event.state);return {outcome:'saved',observation_id:event.observation_id,received_at:new Date(time).toISOString()};}});
+  try{collector.configure({ntEmail:'test@example.org',serverUrl:'http://example.invalid'},['/work'],true);await new Promise(r=>setTimeout(r,15));for(let n=0;n<2;n++){time+=1800000;pending.shift()?.();await new Promise(r=>setTimeout(r,15));}assert.deepEqual(sent,['repository','failed','repository']);}finally{collector.dispose();}
+});
