@@ -14,7 +14,9 @@
 
 ## 90 秒开源版使用教程
 
-[播放或下载开源版教程](https://github.com/AndersJet/ai-dev-insight/raw/refs/heads/main/docs/media/ai-dev-insight-overview.mp4)
+https://github.com/user-attachments/assets/09a96cb7-ee09-4e76-b660-4d583caeed32
+
+[下载完整画质教程](https://github.com/AndersJet/ai-dev-insight/raw/refs/heads/main/docs/media/ai-dev-insight-overview.mp4)
 
 [查看仓库中的视频文件](docs/media/ai-dev-insight-overview.mp4) · MP4 / 90 秒 / 1080p / 合成数据演示，包含背景音乐与操作音效。
 

@@ -14,7 +14,9 @@ Self-hosted insight into Trae adoption, token usage, sessions, and project activ
 
 ## 90-second community edition tutorial
 
-[Watch or download the community tutorial](https://github.com/AndersJet/ai-dev-insight/raw/refs/heads/main/docs/media/ai-dev-insight-overview.mp4)
+https://github.com/user-attachments/assets/09a96cb7-ee09-4e76-b660-4d583caeed32
+
+[Download the full-quality tutorial](https://github.com/AndersJet/ai-dev-insight/raw/refs/heads/main/docs/media/ai-dev-insight-overview.mp4)
 
 [View the video in this repository](docs/media/ai-dev-insight-overview.mp4) · MP4 / 90s / 1080p. Synthetic demo data, background music and interaction sounds.
 
