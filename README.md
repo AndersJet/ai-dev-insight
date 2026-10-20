@@ -12,11 +12,13 @@ Self-hosted insight into Trae adoption, token usage, sessions, and project activ
 
 </div>
 
-## 90-second overview
+## 90-second community edition tutorial
 
-https://github.com/user-attachments/assets/adfb99e7-0ce8-4470-b881-ae3b8e7c2cd0
+[Watch or download the community tutorial](https://github.com/AndersJet/ai-dev-insight/raw/refs/heads/main/docs/media/ai-dev-insight-overview.mp4)
 
-[Open or download the original video](docs/media/ai-dev-insight-overview.mp4) · MP4 / 90s / 1080p. Enable sound for narration.
+[View the video in this repository](docs/media/ai-dev-insight-overview.mp4) · MP4 / 90s / 1080p. Synthetic demo data, background music and interaction sounds.
+
+Recorded from a locally built community 1.0.0 deployment: offline extension installation, platform connection, Trae's built-in Agent, personal and department analytics, and the complete Web / extension Token efficiency workflow from preparing materials and running the prompt to reading the report.
 
 ![Product preview with synthetic data](docs/images/product-overview.png)
 

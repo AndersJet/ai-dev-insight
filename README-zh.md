@@ -12,11 +12,13 @@
 
 </div>
 
-## 90 秒宣传视频
+## 90 秒开源版使用教程
 
-https://github.com/user-attachments/assets/adfb99e7-0ce8-4470-b881-ae3b8e7c2cd0
+[播放或下载开源版教程](https://github.com/AndersJet/ai-dev-insight/raw/refs/heads/main/docs/media/ai-dev-insight-overview.mp4)
 
-[打开或下载原视频](docs/media/ai-dev-insight-overview.mp4) · MP4 / 90 秒 / 1080p，打开播放器声音可收听配音。
+[查看仓库中的视频文件](docs/media/ai-dev-insight-overview.mp4) · MP4 / 90 秒 / 1080p / 合成数据演示，包含背景音乐与操作音效。
+
+基于本地编译的社区版 1.0.0 录制：插件离线安装与接入、内置 Agent 会话、个人与部门统计，以及 Web / 插件 Token 能效分析从准备材料、执行提示词到阅读报告的完整使用流程。
 
 ![使用合成数据的产品预览](docs/images/product-overview.png)
 
